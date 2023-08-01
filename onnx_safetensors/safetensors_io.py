@@ -1,6 +1,8 @@
+import sys
 from typing import Callable, Iterable
 import safetensors
 import onnx
+import safetensors.numpy
 import itertools
 
 
@@ -64,7 +66,18 @@ def _get_all_tensors(model_proto: onnx.ModelProto) -> Iterable[onnx.TensorProto]
     )
 
 
-def load_safetensors(model_proto: onnx.ModelProto, tensor_file: str) -> None:
+def _set_external_data_flag(tensor: onnx.TensorProto, flag: bool) -> None:
+    # We do not need the metadata about external data
+    del tensor.external_data[:]
+    if flag:
+        # After loading raw_data from external_data, change the state of tensors
+        tensor.data_location = onnx.TensorProto.EXTERNAL
+    else:
+        tensor.data_location = onnx.TensorProto.DEFAULT
+    return
+
+
+def load_safetensors_file(model_proto: onnx.ModelProto, tensor_file: str) -> None:
     with safetensors.safe_open(tensor_file, "numpy") as f:
         keys = f.keys()
         for tensor in _get_all_tensors(model_proto):
@@ -78,3 +91,44 @@ def load_safetensors(model_proto: onnx.ModelProto, tensor_file: str) -> None:
                 vals=f.get_tensor(name),
             )
             tensor.raw_data = place_holder.raw_data
+            _set_external_data_flag(tensor, False)
+
+
+def load_safetensors(model_proto: onnx.ModelProto, data: bytes) -> None:
+    tensor_dict = safetensors.numpy.load(data)
+    with safetensors.safe_open(tensor_file, "numpy") as f:
+        for tensor in _get_all_tensors(model_proto):
+            name = tensor.name
+            if (external_tensor := tensor_dict.get(name)) is None:
+                continue
+            place_holder = onnx.helper.make_tensor(
+                name,
+                tensor.data_type,
+                tensor.dims,
+                vals=external_tensor,
+            )
+            tensor.raw_data = place_holder.raw_data
+            _set_external_data_flag(tensor, False)
+
+
+def save_safetensors(
+    model_proto: onnx.ModelProto,
+    tensor_file: str,
+    size_threshold: int = 1024,
+    convert_attribute: bool = False,
+) -> None:
+    if convert_attribute:
+        tensors = _get_all_tensors(model_proto)
+    else:
+        tensors = _get_initializer_tensors(model_proto)
+
+    with safetensors.safe_open(tensor_file, "numpy") as f:
+        for tensor in tensors:
+            name = tensor.name
+            if not (
+                tensor.HasField("raw_data")
+                and sys.getsizeof(tensor.raw_data) >= size_threshold
+            ):
+                continue
+            f.set_tensor(name, tensor.raw_data)
+            _set_external_data_flag(tensor, True)
