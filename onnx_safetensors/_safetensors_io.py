@@ -1,9 +1,7 @@
 from __future__ import annotations
 
-import itertools
 import os
 import sys
-from typing import Callable, Iterable
 
 import onnx
 import safetensors

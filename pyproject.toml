@@ -37,6 +37,9 @@ Documentation = "https://github.com/justinchuby/onnx-safetensors#readme"
 Issues = "https://github.com/justinchuby/onnx-safetensors/issues"
 Source = "https://github.com/justinchuby/onnx-safetensors"
 
+[tool.setuptools.dynamic]
+version = {attr = "onnx_safetensors.__version__"}
+
 [tool.setuptools.packages.find]
 include = ["onnx_safetensors*"]
 

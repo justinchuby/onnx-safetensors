@@ -1,3 +1,5 @@
+"""Use safetensors with ONNX."""
+
 from ._safetensors_io import (
     load_safetensors_file,
     load_safetensors,
