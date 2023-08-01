@@ -117,13 +117,13 @@ def load_safetensors(model_proto: onnx.ModelProto, data: bytes) -> None:
         _set_external_data_flag(tensor, False)
 
 
-def save_safetensors(
+def save_safetensors_file(
     model_proto: onnx.ModelProto,
     tensor_file: str | os.PathLike,
     size_threshold: int = 1024,
-    convert_attribute: bool = False,
+    convert_attributes: bool = False,
 ) -> None:
-    if convert_attribute:
+    if convert_attributes:
         tensors = _get_all_tensors(model_proto)
     else:
         tensors = _get_initializer_tensors(model_proto)
@@ -137,7 +137,7 @@ def save_safetensors(
             and sys.getsizeof(tensor.raw_data) >= size_threshold
         ):
             continue
-        tensor_dict[name] = onnx.helper.tensor_to_numpy(tensor)
+        tensor_dict[name] = onnx.numpy_helper.to_array(tensor)
         _set_external_data_flag(tensor, True)
 
     safetensors.numpy.save_file(tensor_dict, tensor_file)
