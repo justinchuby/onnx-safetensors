@@ -29,7 +29,8 @@ classifiers = [
 dependencies = [
   "numpy",
   "onnx>=1.14",
-  "typing_extensions"
+  "safetensors",
+  "typing_extensions",
 ]
 
 [project.urls]
