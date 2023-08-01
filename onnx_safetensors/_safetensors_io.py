@@ -141,3 +141,6 @@ def save_safetensors_file(
         _set_external_data_flag(tensor, True)
 
     safetensors.numpy.save_file(tensor_dict, tensor_file)
+
+
+# TODO: Allow saving the model file and or returning the bytes and model proto
