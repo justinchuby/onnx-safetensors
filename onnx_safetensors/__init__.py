@@ -1,4 +1,4 @@
-from .safetensors_io import (
+from ._safetensors_io import (
     load_safetensors_file,
     load_safetensors,
     save_safetensors_file,
