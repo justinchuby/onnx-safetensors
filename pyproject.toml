@@ -82,6 +82,7 @@ select = [
 ]
 ignore = [
     "E501", # Line length. Not enforced because black will handle formatting
+    "PLR0913", # Too many arguments
 ]
 
 [tool.ruff.flake8-tidy-imports]
