@@ -79,4 +79,3 @@ def set_external_data_flag(tensor: onnx.TensorProto, flag: bool) -> None:
         tensor.data_location = onnx.TensorProto.EXTERNAL
     else:
         tensor.data_location = onnx.TensorProto.DEFAULT
-    return
