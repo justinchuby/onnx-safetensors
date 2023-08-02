@@ -1,27 +1,53 @@
+"""Private module for loading and saving safetensors data to ONNX models."""
+
 from __future__ import annotations
 
 import os
 import sys
-from typing import Callable
+from typing import TYPE_CHECKING, Callable, Mapping, Union
 
-import numpy as np
 import onnx
+import onnx.helper
 import safetensors
 import safetensors.numpy
 
-from onnx_safetensors import _external_data_helper
+from onnx_safetensors import utils
+
+if TYPE_CHECKING:
+    import numpy as np
+
+ModelOrGraphProto = Union[onnx.ModelProto, onnx.GraphProto]
 
 
-def load_file(model_proto: onnx.ModelProto, tensor_file: str | os.PathLike) -> None:
+def apply_tensors(
+    proto: ModelOrGraphProto, tensor_dict: Mapping[str, np.ndarray]
+) -> set[str]:
+    """Apply a dictionary of external data to an ONNX model or graph.
+
+    Args:
+        proto: ONNX ModelProto or GraphProto to apply external data to.
+        tensor_dict: Dictionary of external data to apply to ONNX model.
+
+    Returns:
+        Names of tensors that were applied.
+    """
+    return utils.apply_tensor_dict(utils.get_all_tensors(proto), tensor_dict)
+
+
+def load_file(proto: ModelOrGraphProto, tensor_file: str | os.PathLike) -> set[str]:
     """Load external data into ONNX model from a safetensors file.
 
     Args:
-        model_proto: ONNX model to load external data into.
+        proto: ONNX model or graph to load external data into.
         tensor_file: safetensors file to load into ONNX model.
+
+    Returns:
+        Names of tensors that were applied.
     """
+    applied = set()
     with safetensors.safe_open(tensor_file, "numpy") as f:
         keys = f.keys()
-        for tensor in _external_data_helper.get_all_tensors(model_proto):
+        for tensor in utils.get_all_tensors(proto):
             name = tensor.name
             if name not in keys:
                 continue
@@ -32,43 +58,36 @@ def load_file(model_proto: onnx.ModelProto, tensor_file: str | os.PathLike) -> N
                 vals=f.get_tensor(name),
             )
             tensor.raw_data = place_holder.raw_data
-            _external_data_helper.set_external_data_flag(tensor, False)
+            utils.set_external_data_flag(tensor, False)
+            applied.add(name)
+    return applied
 
 
-def load(model_proto: onnx.ModelProto, data: bytes) -> None:
+def load(proto: ModelOrGraphProto, data: bytes) -> set[str]:
     """Load external data into ONNX model from safetensors bytes.
 
     Args:
-        model_proto: ONNX model to load external data into.
+        proto: ONNX model or graph to load external data into.
         data: safetensors bytes to load into ONNX model.
+
+    Returns:
+        Names of tensors that were applied.
     """
     tensor_dict = safetensors.numpy.load(data)
-
-    for tensor in _external_data_helper.get_all_tensors(model_proto):
-        name = tensor.name
-        if (external_tensor := tensor_dict.get(name)) is None:
-            continue
-        place_holder = onnx.helper.make_tensor(
-            name,
-            tensor.data_type,
-            tensor.dims,
-            vals=external_tensor,
-        )
-        tensor.raw_data = place_holder.raw_data
-        _external_data_helper.set_external_data_flag(tensor, False)
+    return apply_tensors(proto, tensor_dict)
 
 
 def _extract_tensors(
-    model_proto: onnx.ModelProto,
+    proto: ModelOrGraphProto,
     size_threshold: int = 0,
     convert_attributes: bool = False,
     strip_data: bool = False,
     matcher: Callable[[onnx.TensorProto], bool] | None = None,
 ) -> dict[str, np.ndarray]:
     if convert_attributes:
-        tensors = _external_data_helper.get_all_tensors(model_proto)
+        tensors = utils.get_all_tensors(proto)
     else:
-        tensors = _external_data_helper.get_initializer_tensors(model_proto)
+        tensors = utils.get_initializer_tensors(proto)
 
     tensor_dict = {}
 
@@ -88,14 +107,14 @@ def _extract_tensors(
                 f"Failed to convert tensor '{name}' to numpy array."
             ) from e
         if strip_data:
-            _external_data_helper.set_external_data_flag(tensor, True)
-            _external_data_helper.clear_raw_data(tensor)
+            utils.set_external_data_flag(tensor, True)
+            utils.clear_raw_data(tensor)
 
     return tensor_dict
 
 
 def save_file(
-    model_proto: onnx.ModelProto,
+    proto: ModelOrGraphProto,
     tensor_file: str | os.PathLike,
     size_threshold: int = 0,
     convert_attributes: bool = False,
@@ -105,7 +124,7 @@ def save_file(
     """Save all tensors in an ONNX model to a safetensors file.
 
     Args:
-        model_proto: ONNX model proto to save.
+        proto: ONNX model proto to save.
         tensor_file: Path to save the safetensors file.
         size_threshold: Minimum size in bytes for a tensor to be saved.
             Default is 0, which saves all tensors.
@@ -120,7 +139,7 @@ def save_file(
         A set of tensor names that were saved.
     """
     tensor_dict = _extract_tensors(
-        model_proto,
+        proto,
         size_threshold=size_threshold,
         convert_attributes=convert_attributes,
         strip_data=strip_data,
@@ -132,7 +151,7 @@ def save_file(
 
 
 def save(
-    model_proto: onnx.ModelProto,
+    proto: ModelOrGraphProto,
     size_threshold: int = 0,
     convert_attributes: bool = False,
     strip_data: bool = False,
@@ -141,7 +160,7 @@ def save(
     """Save all tensors in an ONNX model to safetensors bytes.
 
     Args:
-        model_proto: ONNX model proto to save.
+        proto: ONNX model proto to save.
         size_threshold: Minimum size in bytes for a tensor to be saved.
             Default is 0, which saves all tensors.
         convert_attributes: If True, convert all tensors in attributes to safetensors.
@@ -155,7 +174,7 @@ def save(
         A set of tensor names that were saved.
     """
     tensor_dict = _extract_tensors(
-        model_proto,
+        proto,
         size_threshold=size_threshold,
         convert_attributes=convert_attributes,
         strip_data=strip_data,
@@ -165,9 +184,14 @@ def save(
     return safetensors.numpy.save(tensor_dict), set(tensor_dict)
 
 
-def strip_raw_data(model_proto: onnx.ModelProto, names: set[str]):
-    """Remove raw tensor data from the ONNX model."""
-    for tensor in _external_data_helper.get_all_tensors(model_proto):
+def strip_raw_data(proto: ModelOrGraphProto, names: set[str]) -> None:
+    """Remove raw tensor data from the ONNX model or graph.
+
+    Args:
+        proto: ONNX model or graph to remove raw data from.
+        names: Names of tensors to remove raw data from.
+    """
+    for tensor in utils.get_all_tensors(proto):
         if tensor.name in names:
-            _external_data_helper.set_external_data_flag(tensor, True)
-            _external_data_helper.clear_raw_data(tensor)
+            utils.set_external_data_flag(tensor, True)
+            utils.clear_raw_data(tensor)
