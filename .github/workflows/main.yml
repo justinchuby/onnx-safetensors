@@ -7,6 +7,7 @@ on:
     tags:
       - v*
   pull_request:
+  workflow_dispatch:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name == 'workflow_dispatch' }}
@@ -30,10 +31,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # os: [ubuntu-latest, windows-latest]
-        os: [ubuntu-latest]
-        # python_version: ["3.8", "3.11"]
-        python_version: ["3.8"]
+        os: [ubuntu-latest, windows-latest]
+        python_version: ["3.8", "3.11"]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v3

@@ -79,6 +79,7 @@ def load(proto: ModelOrGraphProto, data: bytes) -> set[str]:
 
 def _extract_tensors(
     proto: ModelOrGraphProto,
+    *,
     size_threshold: int = 0,
     convert_attributes: bool = False,
     strip_data: bool = False,
@@ -116,6 +117,7 @@ def _extract_tensors(
 def save_file(
     proto: ModelOrGraphProto,
     tensor_file: str | os.PathLike,
+    *,
     size_threshold: int = 0,
     convert_attributes: bool = False,
     strip_data: bool = False,
@@ -152,6 +154,7 @@ def save_file(
 
 def save(
     proto: ModelOrGraphProto,
+    *,
     size_threshold: int = 0,
     convert_attributes: bool = False,
     strip_data: bool = False,
