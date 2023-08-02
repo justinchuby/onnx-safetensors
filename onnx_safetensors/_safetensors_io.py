@@ -89,6 +89,7 @@ def _extract_tensors(
             ) from e
         if strip_data:
             _external_data_helper.set_external_data_flag(tensor, True)
+            _external_data_helper.clear_raw_data(tensor)
 
     return tensor_dict
 
@@ -169,3 +170,4 @@ def strip_raw_data(model_proto: onnx.ModelProto, names: set[str]):
     for tensor in _external_data_helper.get_all_tensors(model_proto):
         if tensor.name in names:
             _external_data_helper.set_external_data_flag(tensor, True)
+            _external_data_helper.clear_raw_data(tensor)
