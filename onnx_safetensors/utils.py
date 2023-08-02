@@ -79,8 +79,7 @@ def get_all_tensors(
 def set_external_data_flag(tensor: onnx.TensorProto, flag: bool) -> None:
     """Set or unset the external data flag of a tensor."""
     # We do not need the metadata about external data
-    if tensor.HasField("external_data"):
-        tensor.ClearField("external_data")
+    del tensor.external_data[:]
     if flag:
         # After loading raw_data from external_data, change the state of tensors
         tensor.data_location = onnx.TensorProto.EXTERNAL
