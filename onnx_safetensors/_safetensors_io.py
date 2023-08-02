@@ -83,7 +83,7 @@ def _extract_tensors(
             continue
         try:
             tensor_dict[name] = onnx.numpy_helper.to_array(tensor)
-        except Exception as e:  # noqa: PERF203
+        except Exception as e:
             raise RuntimeError(
                 f"Failed to convert tensor '{name}' to numpy array."
             ) from e
