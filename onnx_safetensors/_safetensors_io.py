@@ -66,7 +66,12 @@ def save_safetensors_file(
             and sys.getsizeof(tensor.raw_data) >= size_threshold
         ):
             continue
-        tensor_dict[name] = onnx.numpy_helper.to_array(tensor)
+        try:
+            tensor_dict[name] = onnx.numpy_helper.to_array(tensor)
+        except Exception as e:
+            raise RuntimeError(
+                f"Failed to convert tensor '{name}' to numpy array."
+            ) from e
         _external_data_helper.set_external_data_flag(tensor, True)
 
     safetensors.numpy.save_file(tensor_dict, tensor_file)
