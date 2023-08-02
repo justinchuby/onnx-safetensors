@@ -73,9 +73,16 @@ def get_all_tensors(model_proto: onnx.ModelProto) -> Iterable[onnx.TensorProto]:
 def set_external_data_flag(tensor: onnx.TensorProto, flag: bool) -> None:
     """Set or unset the external data flag of a tensor."""
     # We do not need the metadata about external data
-    del tensor.external_data[:]
+    if tensor.HasField("external_data"):
+        tensor.ClearField("external_data")
     if flag:
         # After loading raw_data from external_data, change the state of tensors
         tensor.data_location = onnx.TensorProto.EXTERNAL
     else:
         tensor.data_location = onnx.TensorProto.DEFAULT
+
+
+def clear_raw_data(tensor: onnx.TensorProto):
+    """Clear raw_data of a tensor."""
+    if tensor.HasField("raw_data"):
+        tensor.ClearField("raw_data")
