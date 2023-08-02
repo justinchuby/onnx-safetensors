@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "onnx-safetensors"
 dynamic = ["version"]
-description = "ONNX extension for saving to and loading from safetensors"
+description = "Use safetensors with ONNX"
 keywords = []
 authors = [
   { name = "Justin Chu", email = "justinchuby@users.noreply.github.com" },
