@@ -13,7 +13,20 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v3
+    - name: Set up Python "3.11"
+      uses: actions/setup-python@v3
+      with:
+        python-version: "3.11"
+    - name: Lint with lintrunner
+      uses: justinchuby/lintrunner-action@main
+
   test:
+    name: Test
     strategy:
       fail-fast: false
       matrix:
@@ -37,6 +50,7 @@ jobs:
           pytest -v
 
   build:
+    name: Build
     needs: [test]
     runs-on: ubuntu-latest
     steps:
@@ -59,10 +73,11 @@ jobs:
           path: dist
 
   release:
+    name: Release
     environment: release
     runs-on: ubuntu-latest
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
-    needs: [build]
+    needs: [test, build, lint]
     permissions:
       id-token: write
     steps:
