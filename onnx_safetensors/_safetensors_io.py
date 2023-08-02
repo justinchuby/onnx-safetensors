@@ -4,15 +4,17 @@ from __future__ import annotations
 
 import os
 import sys
-from typing import Callable, Mapping, Union
+from typing import TYPE_CHECKING, Callable, Mapping, Union
 
-import numpy as np
 import onnx
 import onnx.helper
 import safetensors
 import safetensors.numpy
 
 from onnx_safetensors import utils
+
+if TYPE_CHECKING:
+    import numpy as np
 
 ModelOrGraphProto = Union[onnx.ModelProto, onnx.GraphProto]
 
@@ -38,6 +40,9 @@ def load_file(proto: ModelOrGraphProto, tensor_file: str | os.PathLike) -> set[s
     Args:
         proto: ONNX model or graph to load external data into.
         tensor_file: safetensors file to load into ONNX model.
+
+    Returns:
+        Names of tensors that were applied.
     """
     applied = set()
     with safetensors.safe_open(tensor_file, "numpy") as f:
@@ -64,6 +69,9 @@ def load(proto: ModelOrGraphProto, data: bytes) -> set[str]:
     Args:
         proto: ONNX model or graph to load external data into.
         data: safetensors bytes to load into ONNX model.
+
+    Returns:
+        Names of tensors that were applied.
     """
     tensor_dict = safetensors.numpy.load(data)
     return apply_tensors(proto, tensor_dict)
@@ -176,8 +184,13 @@ def save(
     return safetensors.numpy.save(tensor_dict), set(tensor_dict)
 
 
-def strip_raw_data(proto: ModelOrGraphProto, names: set[str]):
-    """Remove raw tensor data from the ONNX model or graph."""
+def strip_raw_data(proto: ModelOrGraphProto, names: set[str]) -> None:
+    """Remove raw tensor data from the ONNX model or graph.
+
+    Args:
+        proto: ONNX model or graph to remove raw data from.
+        names: Names of tensors to remove raw data from.
+    """
     for tensor in utils.get_all_tensors(proto):
         if tensor.name in names:
             utils.set_external_data_flag(tensor, True)

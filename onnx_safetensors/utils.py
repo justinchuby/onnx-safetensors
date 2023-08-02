@@ -5,7 +5,6 @@
 
 from __future__ import annotations
 
-
 __all__ = [
     "get_all_tensors",
     "get_attribute_tensors",
@@ -15,9 +14,12 @@ __all__ = [
 ]
 
 import itertools
-from typing import Callable, Iterable, Mapping
+from typing import TYPE_CHECKING, Callable, Iterable, Mapping
 
 import onnx
+
+if TYPE_CHECKING:
+    import numpy as np
 
 
 def _recursive_attribute_processor(
