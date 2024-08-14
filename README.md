@@ -37,9 +37,9 @@ import onnx_safetensors
 model: onnx.ModelProto
 tensor_file = "model.safetensors"
 # Save weights from to the safetensors file
-onnx_safetensors.save_file(model, tensor_file, convert_attributes=True)
+onnx_safetensors.save_file(model, tensor_file, convert_attributes=False)
 
 # Save weights from to the safetensors file and clear the raw_data fields of the ONNX model to reduce its size
 # model will be updated inplace
-onnx_safetensors.save_file(model, tensor_file, convert_attributes=True, strip_data=True)
+onnx_safetensors.save_file(model, tensor_file, convert_attributes=False, strip_data=True)
 ```
