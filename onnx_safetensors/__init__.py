@@ -1,6 +1,6 @@
 """Use safetensors with ONNX."""
 
-from onnx_safetensors import utils
+from onnx_safetensors import _utils
 from onnx_safetensors._safetensors_io import (
     apply_tensors,
     load,
@@ -11,12 +11,12 @@ from onnx_safetensors._safetensors_io import (
 )
 
 __all__ = [
+    "_utils",
     "apply_tensors",
     "load",
     "load_file",
     "save",
     "save_file",
     "strip_raw_data",
-    "utils",
 ]
-__version__ = "0.1.1"
+__version__ = "1.0.0"

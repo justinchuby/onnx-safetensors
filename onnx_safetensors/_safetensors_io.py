@@ -17,11 +17,14 @@ from onnx_safetensors import utils
 if TYPE_CHECKING:
     import numpy as np
 
-ModelOrGraphProto = Union[onnx.ModelProto, onnx.GraphProto]
+ModelOrGraph = Union[
+    onnx.ModelProto,
+    onnx.GraphProto,
+]
 
 
 def apply_tensors(
-    proto: ModelOrGraphProto, tensor_dict: Mapping[str, np.ndarray]
+    proto: ModelOrGraph, tensor_dict: Mapping[str, np.ndarray]
 ) -> set[str]:
     """Apply a dictionary of external data to an ONNX model or graph.
 
@@ -35,7 +38,7 @@ def apply_tensors(
     return utils.apply_tensor_dict(utils.get_all_tensors(proto), tensor_dict)
 
 
-def load_file(proto: ModelOrGraphProto, tensor_file: str | os.PathLike) -> set[str]:
+def load_file(proto: ModelOrGraph, tensor_file: str | os.PathLike) -> set[str]:
     """Load external data into ONNX model from a safetensors file.
 
     Args:
@@ -64,7 +67,7 @@ def load_file(proto: ModelOrGraphProto, tensor_file: str | os.PathLike) -> set[s
     return applied
 
 
-def load(proto: ModelOrGraphProto, data: bytes) -> set[str]:
+def load(proto: ModelOrGraph, data: bytes) -> set[str]:
     """Load external data into ONNX model from safetensors bytes.
 
     Args:
@@ -79,7 +82,7 @@ def load(proto: ModelOrGraphProto, data: bytes) -> set[str]:
 
 
 def _extract_tensors(
-    proto: ModelOrGraphProto,
+    proto: ModelOrGraph,
     *,
     size_threshold: int = 0,
     convert_attributes: bool = False,
@@ -116,7 +119,7 @@ def _extract_tensors(
 
 
 def save_file(
-    proto: ModelOrGraphProto,
+    proto: ModelOrGraph,
     tensor_file: str | os.PathLike,
     *,
     size_threshold: int = 0,
@@ -154,7 +157,7 @@ def save_file(
 
 
 def save(
-    proto: ModelOrGraphProto,
+    proto: ModelOrGraph,
     *,
     size_threshold: int = 0,
     convert_attributes: bool = False,
@@ -188,7 +191,7 @@ def save(
     return safetensors.numpy.save(tensor_dict), set(tensor_dict)
 
 
-def strip_raw_data(proto: ModelOrGraphProto, names: set[str]) -> None:
+def strip_raw_data(proto: ModelOrGraph, names: set[str]) -> None:
     """Remove raw tensor data from the ONNX model or graph.
 
     Args:
