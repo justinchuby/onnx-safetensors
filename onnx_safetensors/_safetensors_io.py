@@ -13,6 +13,7 @@ import safetensors
 import safetensors.numpy
 
 from onnx_safetensors import utils
+from onnxscript import ir
 
 if TYPE_CHECKING:
     import numpy as np
@@ -20,22 +21,9 @@ if TYPE_CHECKING:
 ModelOrGraph = Union[
     onnx.ModelProto,
     onnx.GraphProto,
+    ir.Model,
+    ir.Graph,
 ]
-
-
-def apply_tensors(
-    proto: ModelOrGraph, tensor_dict: Mapping[str, np.ndarray]
-) -> set[str]:
-    """Apply a dictionary of external data to an ONNX model or graph.
-
-    Args:
-        proto: ONNX ModelProto or GraphProto to apply external data to.
-        tensor_dict: Dictionary of external data to apply to ONNX model.
-
-    Returns:
-        Names of tensors that were applied.
-    """
-    return utils.apply_tensor_dict(utils.get_all_tensors(proto), tensor_dict)
 
 
 def load_file(proto: ModelOrGraph, tensor_file: str | os.PathLike) -> set[str]:
@@ -79,43 +67,6 @@ def load(proto: ModelOrGraph, data: bytes) -> set[str]:
     """
     tensor_dict = safetensors.numpy.load(data)
     return apply_tensors(proto, tensor_dict)
-
-
-def _extract_tensors(
-    proto: ModelOrGraph,
-    *,
-    size_threshold: int = 0,
-    convert_attributes: bool = False,
-    strip_data: bool = False,
-    matcher: Callable[[onnx.TensorProto], bool] | None = None,
-) -> dict[str, np.ndarray]:
-    if convert_attributes:
-        tensors = utils.get_all_tensors(proto)
-    else:
-        tensors = utils.get_initializer_tensors(proto)
-
-    tensor_dict = {}
-
-    for tensor in tensors:
-        name = tensor.name
-        if not (
-            tensor.HasField("raw_data")
-            and sys.getsizeof(tensor.raw_data) >= size_threshold
-        ):
-            continue
-        if matcher is not None and not matcher(tensor):
-            continue
-        try:
-            tensor_dict[name] = onnx.numpy_helper.to_array(tensor)
-        except Exception as e:
-            raise RuntimeError(
-                f"Failed to convert tensor '{name}' to numpy array."
-            ) from e
-        if strip_data:
-            utils.set_external_data_flag(tensor, True)
-            utils.clear_raw_data(tensor)
-
-    return tensor_dict
 
 
 def save_file(

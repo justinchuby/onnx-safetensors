@@ -17,37 +17,9 @@ from onnxscript import ir
 import safetensors
 
 
-class SafetensorsTensor(ir.ExternalTensor):
-    # TODO: Find a way to get the offsets
-
-
-def get_initializers(
-    graph: ir.Graph,
-) -> Iterable[tuple[str, ir.TensorProtocol, Callable[[ir.TensorProtocol], None]]]:
-    for value in graph.initializers.values():
-        assert value.name is not None
-        assert value.const_value is not None
-
-        def _set_initializer(tensor: ir.TensorProtocol, v=value) -> None:
-            v.const_value = tensor
-
-        yield value.name, value.const_value, _set_initializer
-    # We assume all initializers are defined in the root graph to avoid having
-    # to iterate over all subgraphs
-
-
-def get_attributes(
-    graph: ir.Graph,
-) -> Iterable[tuple[str, ir.TensorProtocol, Callable[[ir.TensorProtocol], None]]]:
-    """Get all tensors from ONNX model attributes."""
-    for node in ir.traversal.RecursiveGraphIterator(graph):
-        for name, attribute in node.attributes.items():
-            assert not isinstance(attribute, ir.RefAttr)
-            if attribute.type == ir.AttributeType.TENSOR:
-
-                def _set_tensor(
-                    tensor: ir.TensorProtocol, node=node, name=name
-                ) -> None:
-                    node.attributes[name] = ir.AttrTensor(name, tensor)
-
-                yield name, attribute.as_tensor(), _set_tensor
+# Loading safetensors
+# 1. Load the offset for each tensor, and create an External Tensor for it
+# to replace the initializers
+# Saving safetensors
+# 1. Load the initializer if any one of them are external.
+# 2. For each initializer, save it into a safetensor file, then replace the initializer
