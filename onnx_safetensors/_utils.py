@@ -14,6 +14,11 @@ from collections.abc import Iterable
 from typing import Callable
 
 from onnxscript import ir
+import safetensors
+
+
+class SafetensorsTensor(ir.ExternalTensor):
+    # TODO: Find a way to get the offsets
 
 
 def get_initializers(
@@ -27,14 +32,8 @@ def get_initializers(
             v.const_value = tensor
 
         yield value.name, value.const_value, _set_initializer
-    for node in graph:
-        for attr in node.attributes.values():
-            assert not isinstance(attr, ir.RefAttr)
-            if attr.type == ir.AttributeType.GRAPH:
-                yield from get_initializers(attr.as_graph())
-            if attr.type == ir.AttributeType.GRAPHS:
-                for g in attr.as_graphs():
-                    yield from get_initializers(g)
+    # We assume all initializers are defined in the root graph to avoid having
+    # to iterate over all subgraphs
 
 
 def get_attributes(

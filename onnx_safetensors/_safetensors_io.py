@@ -189,16 +189,3 @@ def save(
     )
 
     return safetensors.numpy.save(tensor_dict), set(tensor_dict)
-
-
-def strip_raw_data(proto: ModelOrGraph, names: set[str]) -> None:
-    """Remove raw tensor data from the ONNX model or graph.
-
-    Args:
-        proto: ONNX model or graph to remove raw data from.
-        names: Names of tensors to remove raw data from.
-    """
-    for tensor in utils.get_all_tensors(proto):
-        if tensor.name in names:
-            utils.set_external_data_flag(tensor, True)
-            utils.clear_raw_data(tensor)
