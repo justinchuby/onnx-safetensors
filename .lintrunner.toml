@@ -24,14 +24,16 @@ init_command = [
     'run',
     'pip_init',
     '--dry-run={{DRYRUN}}',
-    'ruff==0.1.0',
+    'ruff==0.9.7',
 ]
 is_formatter = true
 
+
 [[linter]]
-code = 'BLACK-ISORT'
+code = 'RUFF-FORMAT'
 include_patterns = [
     '**/*.py',
+    '**/*.pyi',
 ]
 exclude_patterns = []
 command = [
@@ -39,9 +41,8 @@ command = [
     '-m',
     'lintrunner_adapters',
     'run',
-    'black_isort_linter',
-    '--fast',
-    '--',
+    'ruff_format_linter',
+    '--config=pyproject.toml',
     '@{{PATHSFILE}}',
 ]
 init_command = [
@@ -51,22 +52,6 @@ init_command = [
     'run',
     'pip_init',
     '--dry-run={{DRYRUN}}',
-    'black==23.7.0',
-    'isort==5.10.1',
-]
-is_formatter = true
-
-[[linter]]
-code = 'NEWLINE'
-include_patterns = ['**']
-exclude_patterns = []
-command = [
-    'python',
-    '-m',
-    'lintrunner_adapters',
-    'run',
-    'newlines_linter',
-    '--',
-    '@{{PATHSFILE}}',
+    'ruff==0.9.7',
 ]
 is_formatter = true

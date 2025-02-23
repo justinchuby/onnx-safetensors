@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import os
 import sys
-from typing import TYPE_CHECKING, Callable, Mapping, Union
+from collections.abc import Mapping
+from typing import TYPE_CHECKING, Callable, Union
 
 import onnx
 import onnx.helper
