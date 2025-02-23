@@ -11,12 +11,12 @@ from onnx_safetensors._safetensors_io import (
 )
 
 __all__ = [
+    "apply_tensors",
     "load",
     "load_file",
     "save",
     "save_file",
     "strip_raw_data",
-    "apply_tensors",
     "utils",
 ]
 __version__ = "0.1.1"

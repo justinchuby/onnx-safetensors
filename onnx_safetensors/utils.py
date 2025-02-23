@@ -6,15 +6,16 @@
 from __future__ import annotations
 
 __all__ = [
+    "apply_tensor_dict",
     "get_all_tensors",
     "get_attribute_tensors",
     "get_initializer_tensors",
     "set_external_data_flag",
-    "apply_tensor_dict",
 ]
 
 import itertools
-from typing import TYPE_CHECKING, Callable, Iterable, Mapping
+from collections.abc import Iterable, Mapping
+from typing import TYPE_CHECKING, Callable
 
 import onnx
 
