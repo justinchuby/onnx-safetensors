@@ -85,4 +85,4 @@ jobs:
           name: dist
           path: dist
       - name: Publish package
-        uses: pypa/gh-action-pypi-publish@f5622bde02b04381239da3573277701ceca8f6a0
+        uses: pypa/gh-action-pypi-publish@1.12.4
