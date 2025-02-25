@@ -12,7 +12,6 @@ import onnx.helper
 import safetensors
 import safetensors.numpy
 
-from onnx_safetensors import utils
 from onnxscript import ir
 
 if TYPE_CHECKING:
