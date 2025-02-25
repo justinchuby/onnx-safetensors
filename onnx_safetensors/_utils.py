@@ -43,9 +43,9 @@ _SAFETENSORS_TYPE_TO_IR_TYPE = {
     "U32": ir.DataType.UINT32,
     "U64": ir.DataType.UINT64,
 }
+_HEADER_SIZE_NUMBER_SIZE = 8
 
-
-def read_safetensors_header(file: io.IOBase) -> tuple[dict[str, dict[str, Any]], int]:
+def _read_safetensors_header(file: io.IOBase) -> tuple[dict[str, dict[str, Any]], int]:
     """Read the header of a safetensors file.
 
     Args:
@@ -55,7 +55,7 @@ def read_safetensors_header(file: io.IOBase) -> tuple[dict[str, dict[str, Any]],
         The header of the safetensors file.
     """
     file.seek(0)
-    header_size = struct.unpack_from("i", file.read(8))[0]
+    header_size = struct.unpack_from("i", file.read(_HEADER_SIZE_NUMBER_SIZE))[0]
     header = file.read(header_size)
     return json.loads(header.decode("utf-8")), header_size
 
@@ -73,16 +73,15 @@ def read_safetensors(
     """
     path = os.path.join(base_path, location)
     with open(path, "rb") as file:
-        header, header_size = read_safetensors_header(file)
+        header, header_size = _read_safetensors_header(file)
     tensors = {}
     for name, metadata in header.items():
+        offset = metadata["data_offsets"][0] + header_size + _HEADER_SIZE_NUMBER_SIZE
+        length = metadata["data_offsets"][1] - metadata["data_offsets"][0]
         tensors[name] = ir.ExternalTensor(
             location=location,
-            offset=metadata["data_offsets"][0] + header_size + 8,
-            length=metadata["data_offsets"][1]
-            - metadata["data_offsets"][0]
-            + header_size
-            + 8,
+            offset=offset,
+            length=length,
             dtype=_SAFETENSORS_TYPE_TO_IR_TYPE[metadata["dtype"]],
             shape=ir.Shape(metadata["shape"]),
             name=name,
@@ -92,4 +91,4 @@ def read_safetensors(
 
 
 f = open("dd.safetensors", "rb")
-print(read_safetensors_header(f))
+print(_read_safetensors_header(f))
