@@ -9,8 +9,8 @@ import numpy as np
 import onnx
 import onnx.helper
 import onnx.numpy_helper
-import parameterized
 import safetensors.numpy
+from onnxscript import ir
 
 from onnx_safetensors import _safetensors_io
 
@@ -23,7 +23,7 @@ def _create_tensor(value: Any, tensor_name: str) -> onnx.TensorProto:
 
 def _create_test_graph() -> onnx.GraphProto:
     tensor_dict = _get_model_tensor_dict()
-    initializer_value = tensor_dict["input_value"]
+    initializer_value = tensor_dict["initializer_value"]
     attribute_value = tensor_dict["attribute_value"]
     constant_node = onnx.helper.make_node(
         "Constant",
@@ -32,10 +32,10 @@ def _create_test_graph() -> onnx.GraphProto:
         value=_create_tensor(attribute_value, "attribute_value"),
     )
 
-    initializers = [_create_tensor(initializer_value, "input_value")]
+    initializers = [_create_tensor(initializer_value, "initializer_value")]
     inputs = [
         onnx.helper.make_tensor_value_info(
-            "input_value", onnx.TensorProto.FLOAT, initializer_value.shape
+            "initializer_value", onnx.TensorProto.FLOAT, initializer_value.shape
         )
     ]
 
@@ -57,7 +57,7 @@ def _create_test_model() -> onnx.ModelProto:
 
 def _get_replacement_tensor_dict() -> dict[str, np.ndarray]:
     return {
-        "input_value": np.arange(6).reshape(3, 2).astype(np.float32) + 42,
+        "initializer_value": np.arange(6).reshape(3, 2).astype(np.float32) + 42,
         "attribute_value": np.arange(6).reshape(2, 3).astype(np.float32) + 24,
         "unused_value": np.array([1.0, 2.0, 3.0]),
     }
@@ -68,14 +68,14 @@ def _get_model_tensor_dict() -> dict[str, np.ndarray]:
     attribute_value = np.arange(6).reshape(2, 3).astype(np.float32) + 256
     return {
         "attribute_value": attribute_value,
-        "input_value": initializer_value,
+        "initializer_value": initializer_value,
     }
 
 
 class SafeTensorsIoTest(unittest.TestCase):
     def setUp(self) -> None:
         self.model = _create_test_model()
-        self.graph = _create_test_graph()
+        self.model_ir = ir.serde.deserialize_model(self.model)
         self.model_tensor_dict = _get_model_tensor_dict()
         self.replacement_tensor_dict = _get_replacement_tensor_dict()
         self.temp_dir = tempfile.TemporaryDirectory()
@@ -86,67 +86,33 @@ class SafeTensorsIoTest(unittest.TestCase):
 
     def test_load_file_to_model(self) -> None:
         safetensors.numpy.save_file(self.replacement_tensor_dict, self.tensor_file_path)
-        actual = _safetensors_io.load_file(self.model, self.tensor_file_path)
-        expected = {"attribute_value", "input_value"}
-        self.assertEqual(actual, expected)
+        proto = _safetensors_io.load_file(self.model, self.tensor_file_path)
+        model = ir.serde.deserialize_model(proto)
 
-    def test_load_file_to_graph(self) -> None:
-        safetensors.numpy.save_file(self.replacement_tensor_dict, self.tensor_file_path)
-        actual = _safetensors_io.load_file(self.graph, self.tensor_file_path)
-        expected = {"attribute_value", "input_value"}
-        self.assertEqual(actual, expected)
+        np.testing.assert_equal(
+            model.graph.initializers["initializer_value"].const_value,
+            self.replacement_tensor_dict["initializer_value"],
+        )
 
     def test_load_to_model(self) -> None:
         tensors = safetensors.numpy.save(self.replacement_tensor_dict)
-        actual = _safetensors_io.load(self.model, tensors)
-        expected = {"attribute_value", "input_value"}
-        self.assertEqual(actual, expected)
+        proto = _safetensors_io.load(self.model, tensors)
+        model = ir.serde.deserialize_model(proto)
 
-    def test_load_to_graph(self) -> None:
-        tensors = safetensors.numpy.save(self.replacement_tensor_dict)
-        actual = _safetensors_io.load(self.graph, tensors)
-        expected = {"attribute_value", "input_value"}
-        self.assertEqual(actual, expected)
-
-    @parameterized.parameterized.expand(
-        [
-            (True, {"attribute_value", "input_value"}),
-            (False, {"input_value"}),
-        ]
-    )
-    def test_save_file_from_model(self, convert_attributes, expected) -> None:
-        actual = _safetensors_io.save_file(
-            self.model, self.tensor_file_path, convert_attributes=convert_attributes
+        np.testing.assert_equal(
+            model.graph.initializers["initializer_value"].const_value,
+            self.replacement_tensor_dict["initializer_value"],
         )
-        self.assertEqual(actual, expected)
+
+    def test_save_file_from_model(self) -> None:
+        _ = _safetensors_io.save_file(self.model, self.tensor_file_path)
         tensors = safetensors.numpy.load_file(self.tensor_file_path)
-        self.assertEqual(set(tensors.keys()), expected)
-        for key in expected:
+        for key in tensors:
             np.testing.assert_array_equal(tensors[key], self.model_tensor_dict[key])
-
-    @parameterized.parameterized.expand(
-        [
-            (True, {"attribute_value", "input_value"}),
-            (False, {"input_value"}),
-        ]
-    )
-    def test_save_file_from_graph(self, convert_attributes, expected) -> None:
-        actual = _safetensors_io.save_file(
-            self.graph, self.tensor_file_path, convert_attributes=convert_attributes
-        )
-        self.assertEqual(actual, expected)
-        tensors = safetensors.numpy.load_file(self.tensor_file_path)
-        self.assertEqual(set(tensors.keys()), expected)
-        for key in expected:
-            np.testing.assert_array_equal(tensors[key], self.model_tensor_dict[key])
-
-    @unittest.skip("Not implemented")
-    def test_save_file_clears_raw_data_when_strip_data_is_true(self):
-        raise NotImplementedError()
-
-    def test_strip_raw_data_clears_specified_raw_data(self) -> None:
-        _safetensors_io.strip_raw_data(self.model, {"input_value"})
-        # TODO: Test that raw data is cleared
 
 
 # TODO: Test all ONNX data types
+
+
+if __name__ == "__main__":
+    unittest.main()
