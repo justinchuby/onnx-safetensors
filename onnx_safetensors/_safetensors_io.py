@@ -2,200 +2,283 @@
 
 from __future__ import annotations
 
+import io
+import json
 import os
-import sys
+import struct
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Callable, Union
+from typing import TYPE_CHECKING, Any, TypeVar
 
 import onnx
 import onnx.helper
 import safetensors
 import safetensors.numpy
-
-from onnx_safetensors import utils
+from onnxscript import ir
 
 if TYPE_CHECKING:
-    import numpy as np
-
-ModelOrGraphProto = Union[onnx.ModelProto, onnx.GraphProto]
+    pass
 
 
-def apply_tensors(
-    proto: ModelOrGraphProto, tensor_dict: Mapping[str, np.ndarray]
-) -> set[str]:
-    """Apply a dictionary of external data to an ONNX model or graph.
+_SAFETENSORS_TYPE_TO_IR_TYPE = {
+    "BOOL": ir.DataType.BOOL,
+    "F8_E5M2": ir.DataType.FLOAT8E5M2,
+    "F8_E4M3": ir.DataType.FLOAT8E4M3FN,
+    "BF16": ir.DataType.BFLOAT16,
+    "F16": ir.DataType.FLOAT16,
+    "F32": ir.DataType.FLOAT,
+    "F64": ir.DataType.DOUBLE,
+    "I4": ir.DataType.INT4,
+    "I8": ir.DataType.INT8,
+    "I16": ir.DataType.INT16,
+    "I32": ir.DataType.INT32,
+    "I64": ir.DataType.INT64,
+    "U4": ir.DataType.UINT4,
+    "U8": ir.DataType.UINT8,
+    "U16": ir.DataType.UINT16,
+    "U32": ir.DataType.UINT32,
+    "U64": ir.DataType.UINT64,
+}
+_HEADER_SIZE_NUMBER_SIZE = 8
+
+
+TModel = TypeVar("TModel", onnx.ModelProto, ir.Model)
+
+
+def _apply_tensors(model: ir.Model, tensors: Mapping[str, ir.TensorProtocol]):
+    """Apply tensors to an ONNX model.
 
     Args:
-        proto: ONNX ModelProto or GraphProto to apply external data to.
-        tensor_dict: Dictionary of external data to apply to ONNX model.
-
-    Returns:
-        Names of tensors that were applied.
+        model: ONNX model to apply tensors to.
+        tensors: Tensors to apply to the ONNX model.
     """
-    return utils.apply_tensor_dict(utils.get_all_tensors(proto), tensor_dict)
+    graph = model.graph
+    for name, tensor in tensors.items():
+        if name not in graph.initializers:
+            continue
+        graph.initializers[name].const_value = tensor
 
 
-def load_file(proto: ModelOrGraphProto, tensor_file: str | os.PathLike) -> set[str]:
+def replace_tensors(
+    model: ir.Model, /, location: str | os.PathLike, base_path: str | os.PathLike
+) -> None:
+    """Replace all tensors in an ONNX model with external data from a safetensors file.
+
+    Args:
+        model: ONNX model to replace tensors in.
+        location: Path to the safetensors file relative to the ONNX model file.
+        base_path: Directory where the ONNX model file is stored.
+
+    .. versionadded:: 1.0
+        Added the function.
+    """
+    tensors = _read_safetensors(location, base_path)
+    _apply_tensors(model, tensors)
+
+
+def load_file(model: TModel, /, tensor_file: str | os.PathLike) -> TModel:
     """Load external data into ONNX model from a safetensors file.
 
     Args:
-        proto: ONNX model or graph to load external data into.
+        model: ONNX model.
         tensor_file: safetensors file to load into ONNX model.
 
-    Returns:
-        Names of tensors that were applied.
+    .. versionchanged:: 1.0
+        The return value is now the updated ONNX model instead of a set of loaded tensor names.
     """
-    applied = set()
-    with safetensors.safe_open(tensor_file, "numpy") as f:
-        keys = f.keys()
-        for tensor in utils.get_all_tensors(proto):
-            name = tensor.name
-            if name not in keys:
-                continue
-            place_holder = onnx.helper.make_tensor(
-                name,
-                tensor.data_type,
-                tensor.dims,
-                vals=f.get_tensor(name),
-            )
-            tensor.raw_data = place_holder.raw_data
-            utils.set_external_data_flag(tensor, False)
-            applied.add(name)
-    return applied
+    # TODO(justinchuby): Handle safetensors unsupported dtypes
+    if isinstance(model, onnx.ModelProto):
+        model_ir = ir.serde.deserialize_model(model)
+    else:
+        model_ir = model
+
+    replace_tensors(model_ir, tensor_file, "")
+    model_ir = ir.external_data.load_to_model(model_ir)
+
+    if isinstance(model, onnx.ModelProto):
+        return ir.serde.serialize_model(model_ir)
+    return model_ir
 
 
-def load(proto: ModelOrGraphProto, data: bytes) -> set[str]:
+def load(model: TModel, /, data: bytes) -> TModel:
     """Load external data into ONNX model from safetensors bytes.
 
     Args:
-        proto: ONNX model or graph to load external data into.
+        model: ONNX model.
         data: safetensors bytes to load into ONNX model.
 
-    Returns:
-        Names of tensors that were applied.
+    .. versionchanged:: 1.0
+        The return value is now the updated ONNX model instead of a set of loaded tensor names.
     """
-    tensor_dict = safetensors.numpy.load(data)
-    return apply_tensors(proto, tensor_dict)
-
-
-def _extract_tensors(
-    proto: ModelOrGraphProto,
-    *,
-    size_threshold: int = 0,
-    convert_attributes: bool = False,
-    strip_data: bool = False,
-    matcher: Callable[[onnx.TensorProto], bool] | None = None,
-) -> dict[str, np.ndarray]:
-    if convert_attributes:
-        tensors = utils.get_all_tensors(proto)
+    if isinstance(model, onnx.ModelProto):
+        model_ir = ir.serde.deserialize_model(model)
     else:
-        tensors = utils.get_initializer_tensors(proto)
+        model_ir = model
+
+    # TODO: Handle more dtypes
+    tensors = safetensors.numpy.load(data)
+    tensors_dict = {
+        name: ir.Tensor(value=value, name=name) for name, value in tensors.items()
+    }
+    _apply_tensors(model_ir, tensors_dict)
+
+    if isinstance(model, onnx.ModelProto):
+        return ir.serde.serialize_model(model_ir)
+    return model_ir
+
+
+def load_file_as_external_data(
+    model: TModel, /, location: str | os.PathLike, base_path: str | os.PathLike = ""
+) -> TModel:
+    """Load weights from safetensors file and use them as external data for the ONNX model.
+
+    Args:
+        model: ONNX model or graph to load external data into.
+        location: Path to the safetensors file relative to the ONNX model file.
+        base_path: Directory where the ONNX model file is stored.
+
+    Returns:
+        The ONNX model with the external data.
+
+    .. versionadded:: 1.0
+        Added the function.
+    """
+    if isinstance(model, onnx.ModelProto):
+        model_ir = ir.serde.deserialize_model(model)
+    else:
+        model_ir = model
+
+    replace_tensors(model_ir, location, base_path)
+
+    if isinstance(model, onnx.ModelProto):
+        return ir.serde.serialize_model(model_ir)
+    return model_ir
+
+
+def save(model: TModel, /, *, size_threshold: int = 0) -> bytes:
+    """Save all tensors in an ONNX model to a safetensors object serialized as bytes.
+
+    Args:
+        model: ONNX model to save.
+        size_threshold: Minimum size in bytes for a tensor to be saved.
+            Default is 0, which saves all initializers.
+
+    Returns:
+        The safetensors object serialized as bytes.
+    """
+    if isinstance(model, onnx.ModelProto):
+        model_ir = ir.serde.deserialize_model(model)
+    else:
+        model_ir = model
 
     tensor_dict = {}
-
-    for tensor in tensors:
-        name = tensor.name
-        if not (
-            tensor.HasField("raw_data")
-            and sys.getsizeof(tensor.raw_data) >= size_threshold
-        ):
+    for name, initializer in model_ir.graph.initializers.items():
+        if initializer.const_value is None:
             continue
-        if matcher is not None and not matcher(tensor):
+        if initializer.const_value.size < size_threshold:
             continue
-        try:
-            tensor_dict[name] = onnx.numpy_helper.to_array(tensor)
-        except Exception as e:
-            raise RuntimeError(
-                f"Failed to convert tensor '{name}' to numpy array."
-            ) from e
-        if strip_data:
-            utils.set_external_data_flag(tensor, True)
-            utils.clear_raw_data(tensor)
-
-    return tensor_dict
+        tensor_dict[name] = initializer.const_value.numpy()
+    return safetensors.numpy.save(tensor_dict)
 
 
 def save_file(
-    proto: ModelOrGraphProto,
-    tensor_file: str | os.PathLike,
+    model: TModel,
+    /,
+    location: str | os.PathLike,
+    base_path: str | os.PathLike = "",
     *,
     size_threshold: int = 0,
-    convert_attributes: bool = False,
-    strip_data: bool = False,
-    matcher: Callable[[onnx.TensorProto], bool] | None = None,
-) -> set[str]:
+    replace_data: bool = True,
+) -> TModel:
     """Save all tensors in an ONNX model to a safetensors file.
 
     Args:
-        proto: ONNX model proto to save.
-        tensor_file: Path to save the safetensors file.
+        model: ONNX model proto to save.
+        location: Path to the safetensors file relative to the ONNX model file.
+        base_path: Directory where the ONNX model file is stored.
         size_threshold: Minimum size in bytes for a tensor to be saved.
             Default is 0, which saves all tensors.
-        convert_attributes: If True, convert all tensors in attributes to safetensors.
-            Otherwise, only convert initializer tensors.
-        strip_data: If True, remove the tensor data from the ONNX model after saving.
-            This will modify the ONNX model in place. Enable to preserve memory.
-        matcher: A function that takes a TensorProto and returns True if the tensor
-            should be saved. If None, all tensors are saved.
+        replace_data: Whether to replace the data in the ONNX model with
+            the external data. Default is True.
 
     Returns:
-        A set of tensor names that were saved.
-    """
-    tensor_dict = _extract_tensors(
-        proto,
-        size_threshold=size_threshold,
-        convert_attributes=convert_attributes,
-        strip_data=strip_data,
-        matcher=matcher,
-    )
+        The ONNX model with the external data.
 
+    .. versionadded:: 1.0
+        The *base_path* parameter was added so the external data can be referenced
+        relative to the ONNX model file correctly.
+    .. versionadded:: 1.0
+        The *replace_data* parameter was added to allow the user to choose
+        whether to replace the data in the ONNX model with the external data.
+    .. versionremoved:: 1.0
+        The *convert_attributes* and *strip_data* parameters were removed. Set
+        *replace_data* to achieve similar effect as *strip_data*.
+    .. versionchanged:: 1.0
+        The return value is now the updated ONNX model instead of a set of saved tensor names.
+    """
+    if isinstance(model, onnx.ModelProto):
+        model_ir = ir.serde.deserialize_model(model)
+    else:
+        model_ir = model
+
+    tensor_dict = {}
+    for name, initializer in model_ir.graph.initializers.items():
+        if initializer.const_value is None:
+            continue
+        if initializer.const_value.size < size_threshold:
+            continue
+        tensor_dict[name] = initializer.const_value.numpy()
+
+    tensor_file = os.path.join(base_path, location)
     safetensors.numpy.save_file(tensor_dict, tensor_file)
-    return set(tensor_dict)
+    if replace_data:
+        replace_tensors(model_ir, location, base_path)
+
+    if isinstance(model, onnx.ModelProto):
+        return ir.serde.serialize_model(model_ir)
+    return model_ir
 
 
-def save(
-    proto: ModelOrGraphProto,
-    *,
-    size_threshold: int = 0,
-    convert_attributes: bool = False,
-    strip_data: bool = False,
-    matcher: Callable[[onnx.TensorProto], bool] | None = None,
-) -> tuple[bytes, set[str]]:
-    """Save all tensors in an ONNX model to safetensors bytes.
+def _read_safetensors_header(file: io.IOBase) -> tuple[dict[str, dict[str, Any]], int]:
+    """Read the header of a safetensors file.
 
     Args:
-        proto: ONNX model proto to save.
-        size_threshold: Minimum size in bytes for a tensor to be saved.
-            Default is 0, which saves all tensors.
-        convert_attributes: If True, convert all tensors in attributes to safetensors.
-            Otherwise, only convert initializer tensors.
-        strip_data: If True, remove the tensor data from the ONNX model after saving.
-            This will modify the ONNX model in place. Enable to preserve memory.
-        matcher: A function that takes a TensorProto and returns True if the tensor
-            should be saved. If None, all tensors are saved.
+        file: The safetensors file to read.
 
     Returns:
-        A set of tensor names that were saved.
+        The header of the safetensors file.
     """
-    tensor_dict = _extract_tensors(
-        proto,
-        size_threshold=size_threshold,
-        convert_attributes=convert_attributes,
-        strip_data=strip_data,
-        matcher=matcher,
-    )
-
-    return safetensors.numpy.save(tensor_dict), set(tensor_dict)
+    file.seek(0)
+    header_size = struct.unpack_from("i", file.read(_HEADER_SIZE_NUMBER_SIZE))[0]
+    header = file.read(header_size)
+    return json.loads(header.decode("utf-8")), header_size
 
 
-def strip_raw_data(proto: ModelOrGraphProto, names: set[str]) -> None:
-    """Remove raw tensor data from the ONNX model or graph.
+def _read_safetensors(
+    location: str | os.PathLike, base_path: str | os.PathLike
+) -> dict[str, ir.ExternalTensor]:
+    """Read a safetensors file.
 
     Args:
-        proto: ONNX model or graph to remove raw data from.
-        names: Names of tensors to remove raw data from.
+        location: The safetensors file to read.
+        base_path: Directory where the ONNX model file is stored.
+
+    Returns:
+        The contents of the safetensors file.
     """
-    for tensor in utils.get_all_tensors(proto):
-        if tensor.name in names:
-            utils.set_external_data_flag(tensor, True)
-            utils.clear_raw_data(tensor)
+    path = os.path.join(base_path, location)
+    with open(path, "rb") as file:
+        header, header_size = _read_safetensors_header(file)
+    tensors = {}
+    for name, metadata in header.items():
+        offset = metadata["data_offsets"][0] + header_size + _HEADER_SIZE_NUMBER_SIZE
+        length = metadata["data_offsets"][1] - metadata["data_offsets"][0]
+        tensors[name] = ir.ExternalTensor(
+            location=location,
+            offset=offset,
+            length=length,
+            dtype=_SAFETENSORS_TYPE_TO_IR_TYPE[metadata["dtype"]],
+            shape=ir.Shape(metadata["shape"]),
+            name=name,
+            base_dir=base_path,
+        )
+    return tensors
