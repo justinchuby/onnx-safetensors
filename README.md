@@ -10,7 +10,7 @@ ONNX extension for saving to and loading from safetensors 🤗.
 
 ## Install
 
-```
+```sh
 pip install --upgrade onnx-safetensors
 ```
 

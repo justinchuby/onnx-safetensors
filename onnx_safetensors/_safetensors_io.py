@@ -67,6 +67,9 @@ def replace_tensors(
         model: ONNX model to replace tensors in.
         location: Path to the safetensors file relative to the ONNX model file.
         base_path: Directory where the ONNX model file is stored.
+
+    .. versionadded:: 1.0
+        Added the function.
     """
     tensors = _read_safetensors(location, base_path)
     _apply_tensors(model, tensors)
@@ -78,6 +81,9 @@ def load_file(model: TModel, /, tensor_file: str | os.PathLike) -> TModel:
     Args:
         model: ONNX model.
         tensor_file: safetensors file to load into ONNX model.
+
+    .. versionchanged:: 1.0
+        The return value is now the updated ONNX model instead of a set of loaded tensor names.
     """
     # TODO(justinchuby): Handle safetensors unsupported dtypes
     if isinstance(model, onnx.ModelProto):
@@ -99,6 +105,9 @@ def load(model: TModel, /, data: bytes) -> TModel:
     Args:
         model: ONNX model.
         data: safetensors bytes to load into ONNX model.
+
+    .. versionchanged:: 1.0
+        The return value is now the updated ONNX model instead of a set of loaded tensor names.
     """
     if isinstance(model, onnx.ModelProto):
         model_ir = ir.serde.deserialize_model(model)
@@ -126,6 +135,12 @@ def load_file_as_external_data(
         model: ONNX model or graph to load external data into.
         location: Path to the safetensors file relative to the ONNX model file.
         base_path: Directory where the ONNX model file is stored.
+
+    Returns:
+        The ONNX model with the external data.
+
+    .. versionadded:: 1.0
+        Added the function.
     """
     if isinstance(model, onnx.ModelProto):
         model_ir = ir.serde.deserialize_model(model)
@@ -187,6 +202,18 @@ def save_file(
 
     Returns:
         The ONNX model with the external data.
+
+    .. versionadded:: 1.0
+        The *base_path* parameter was added so the external data can be referenced
+        relative to the ONNX model file correctly.
+    .. versionadded:: 1.0
+        The *replace_data* parameter was added to allow the user to choose
+        whether to replace the data in the ONNX model with the external data.
+    .. versionremoved:: 1.0
+        The *convert_attributes* and *strip_data* parameters were removed. Set
+        *replace_data* to achieve similar effect as *strip_data*.
+    .. versionchanged:: 1.0
+        The return value is now the updated ONNX model instead of a set of saved tensor names.
     """
     if isinstance(model, onnx.ModelProto):
         model_ir = ir.serde.deserialize_model(model)
