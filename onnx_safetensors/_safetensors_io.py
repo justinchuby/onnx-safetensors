@@ -22,7 +22,9 @@ if TYPE_CHECKING:
 
 
 _SAFETENSORS_TYPE_TO_IR_TYPE = {
-    "B": ir.DataType.BOOL,
+    "BOOL": ir.DataType.BOOL,
+    "F8_E5M2": ir.DataType.FLOAT8E5M2,
+    "F8_E4M3": ir.DataType.FLOAT8E4M3FN,
     "BF16": ir.DataType.BFLOAT16,
     "F16": ir.DataType.FLOAT16,
     "F32": ir.DataType.FLOAT,
@@ -205,7 +207,8 @@ def _read_safetensors(
     """Read a safetensors file.
 
     Args:
-        file: The safetensors file to read.
+        location: The safetensors file to read.
+        base_path: Base path for the safetensors file.
 
     Returns:
         The contents of the safetensors file.
