@@ -110,6 +110,30 @@ class SafeTensorsIoTest(unittest.TestCase):
         for key in tensors:
             np.testing.assert_array_equal(tensors[key], self.model_tensor_dict[key])
 
+    def test_load_file_to_ir_model(self) -> None:
+        safetensors.numpy.save_file(self.replacement_tensor_dict, self.tensor_file_path)
+        model = _safetensors_io.load_file(self.model_ir, self.tensor_file_path)
+
+        np.testing.assert_equal(
+            model.graph.initializers["initializer_value"].const_value,
+            self.replacement_tensor_dict["initializer_value"],
+        )
+
+    def test_load_to_ir_model(self) -> None:
+        tensors = safetensors.numpy.save(self.replacement_tensor_dict)
+        model = _safetensors_io.load(self.model_ir, tensors)
+
+        np.testing.assert_equal(
+            model.graph.initializers["initializer_value"].const_value,
+            self.replacement_tensor_dict["initializer_value"],
+        )
+
+    def test_save_file_from_ir_model(self) -> None:
+        _ = _safetensors_io.save_file(self.model_ir, self.tensor_file_path)
+        tensors = safetensors.numpy.load_file(self.tensor_file_path)
+        for key in tensors:
+            np.testing.assert_array_equal(tensors[key], self.model_tensor_dict[key])
+
 
 # TODO: Test all ONNX data types
 
