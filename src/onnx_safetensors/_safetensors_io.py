@@ -40,22 +40,22 @@ _SAFETENSORS_DTYPE_TO_IR_DTYPE = {
 }
 _IR_DTYPE_TO_SAFETENSORS_DTYPE = {
     ir.DataType.BOOL: "BOOL",
-    ir.DataType.FLOAT4E2M1: "U8",
+    ir.DataType.FLOAT4E2M1: "uint8",
     ir.DataType.FLOAT8E5M2: "F8_E5M2",
     ir.DataType.FLOAT8E4M3FN: "F8_E4M3",
-    ir.DataType.FLOAT8E4M3FNUZ: "U8",
-    ir.DataType.FLOAT8E5M2FNUZ: "U8",
+    ir.DataType.FLOAT8E4M3FNUZ: "uint8",
+    ir.DataType.FLOAT8E5M2FNUZ: "uint8",
     ir.DataType.BFLOAT16: "BF16",
     ir.DataType.FLOAT16: "F16",
     ir.DataType.FLOAT: "F32",
     ir.DataType.DOUBLE: "F64",
-    ir.DataType.INT4: "U8",
+    ir.DataType.INT4: "uint8",
     ir.DataType.INT8: "I8",
     ir.DataType.INT16: "I16",
     ir.DataType.INT32: "I32",
     ir.DataType.INT64: "I64",
-    ir.DataType.UINT4: "U8",
-    ir.DataType.UINT8: "U8",
+    ir.DataType.UINT4: "uint8",
+    ir.DataType.UINT8: "uint8",
     ir.DataType.UINT16: "U16",
     ir.DataType.UINT32: "U32",
     ir.DataType.UINT64: "U64",
@@ -372,23 +372,23 @@ def _check_tensors_match(
                 f"The tensor from safetensors has dtype: {safe_tensor.dtype}, "
                 f"which does not match the dtype of the tensor in the model: {model_tensor.dtype}."
             )
-    if model_tensor.dtype in {ir.DataType.UINT4, ir.DataType.INT4}:
+    elif model_tensor.dtype in {ir.DataType.UINT4, ir.DataType.INT4}:
         if safe_tensor.dtype != ir.DataType.UINT8:
             raise ValueError(
                 f"The tensor from safetensors has dtype: {safe_tensor.dtype}, but it must be UINT8 to "
                 f"represent the dtype of the tensor in the model: {model_tensor.dtype}."
             )
-    if model_tensor.dtype != safe_tensor.dtype:
+    elif model_tensor.dtype != safe_tensor.dtype:
         raise ValueError(
             f"The tensor from safetensors has dtype: {safe_tensor.dtype}, "
             f"which does not match the dtype of the tensor in the model: {model_tensor.dtype}."
         )
-    if model_tensor.shape != safe_tensor.shape:
+    elif model_tensor.shape != safe_tensor.shape:
         raise ValueError(
             f"The tensor from safetensors has shape: {safe_tensor.shape}, "
             f"which does not match the shape of the tensor in the model: {model_tensor.shape}."
         )
-    if model_tensor.nbytes != safe_tensor.nbytes:
+    elif model_tensor.nbytes != safe_tensor.nbytes:
         raise ValueError(
             f"The tensor from safetensors has size: {safe_tensor.nbytes} bytes, "
             f"which does not match the size of the tensor in the model: {model_tensor.nbytes} bytes."
