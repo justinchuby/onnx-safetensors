@@ -106,7 +106,7 @@ def _get_bytes(tensor: ir.TensorProtocol) -> bytes | memoryview:
         ir.DataType.UINT4,
     }:
         return tensor.tobytes()
-    return memoryview(tensor.numpy())
+    return tensor.numpy().data
 
 
 def replace_tensors(
