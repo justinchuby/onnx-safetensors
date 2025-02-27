@@ -44,18 +44,30 @@ _HEADER_SIZE_NUMBER_SIZE = 8
 TModel = TypeVar("TModel", onnx.ModelProto, ir.Model)
 
 
-def _apply_tensors(model: ir.Model, tensors: Mapping[str, ir.TensorProtocol]):
+def _apply_tensors(
+    model: ir.Model,
+    tensors: Mapping[str, ir.TensorProtocol],
+    apply_safetensors: bool = False,
+):
     """Apply tensors to an ONNX model.
 
     Args:
         model: ONNX model to apply tensors to.
         tensors: Tensors to apply to the ONNX model.
+        apply_safetensors: Whether it is applying safetensors to the ONNX model.
     """
     graph = model.graph
     for name, tensor in tensors.items():
         if name not in graph.initializers:
             continue
-        graph.initializers[name].const_value = tensor
+        model_tensor = graph.initializers[name].const_value
+        if model_tensor is not None and apply_safetensors:
+            assert isinstance(tensor, ir.ExternalTensor)
+            _check_tensors_match(model_tensor, tensor)
+            updated_tensor = _migrate_tensor_shape_dtype(model_tensor, tensor)
+        else:
+            updated_tensor = tensor
+        graph.initializers[name].const_value = updated_tensor
 
 
 def replace_tensors(
@@ -71,8 +83,8 @@ def replace_tensors(
     .. versionadded:: 1.0
         Added the function.
     """
-    tensors = _read_safetensors(location, base_dir)
-    _apply_tensors(model, tensors)
+    tensors = _read_safetensors(location, base_dir=base_dir)
+    _apply_tensors(model, tensors, apply_safetensors=True)
 
 
 def load_file(model: TModel, /, tensor_file: str | os.PathLike) -> TModel:
@@ -85,7 +97,6 @@ def load_file(model: TModel, /, tensor_file: str | os.PathLike) -> TModel:
     .. versionchanged:: 1.0
         The return value is now the updated ONNX model instead of a set of loaded tensor names.
     """
-    # TODO(justinchuby): Handle safetensors unsupported dtypes
     if isinstance(model, onnx.ModelProto):
         model_ir = ir.serde.deserialize_model(model)
     else:
@@ -282,3 +293,95 @@ def _read_safetensors(
             base_dir=base_dir,
         )
     return tensors
+
+
+def _check_tensors_match(
+    model_tensor: ir.TensorProtocol, safe_tensor: ir.ExternalTensor
+):
+    """Check if two tensors match.
+
+    Args:
+        a: The first tensor.
+        b: The second tensor.
+
+    Raises:
+        ValueError: If the tensors do not match.
+    """
+    if model_tensor.dtype in {
+        ir.DataType.FLOAT8E4M3FN,
+        ir.DataType.FLOAT8E5M2,
+        ir.DataType.FLOAT8E4M3FNUZ,
+        ir.DataType.FLOAT8E5M2FNUZ,
+    }:
+        if safe_tensor.dtype not in {
+            ir.DataType.FLOAT8E4M3FN,
+            ir.DataType.FLOAT8E5M2,
+            ir.DataType.FLOAT8E4M3FNUZ,
+            ir.DataType.FLOAT8E5M2FNUZ,
+            ir.DataType.UINT8,
+        }:
+            raise ValueError(
+                f"The tensor from safetensors has dtype: {safe_tensor.dtype}, "
+                f"which does not match the dtype of the tensor in the model: {model_tensor.dtype}."
+            )
+    if model_tensor.dtype in {ir.DataType.UINT4, ir.DataType.INT4}:
+        if safe_tensor.dtype != ir.DataType.UINT8:
+            raise ValueError(
+                f"The tensor from safetensors has dtype: {safe_tensor.dtype}, but it must be UINT8 to "
+                f"represent the dtype of the tensor in the model: {model_tensor.dtype}."
+            )
+    if model_tensor.dtype != safe_tensor.dtype:
+        raise ValueError(
+            f"The tensor from safetensors has dtype: {safe_tensor.dtype}, "
+            f"which does not match the dtype of the tensor in the model: {model_tensor.dtype}."
+        )
+    if model_tensor.shape != safe_tensor.shape:
+        raise ValueError(
+            f"The tensor from safetensors has shape: {safe_tensor.shape}, "
+            f"which does not match the shape of the tensor in the model: {model_tensor.shape}."
+        )
+    if model_tensor.nbytes != safe_tensor.nbytes:
+        raise ValueError(
+            f"The tensor from safetensors has size: {safe_tensor.nbytes} bytes, "
+            f"which does not match the size of the tensor in the model: {model_tensor.nbytes} bytes."
+        )
+
+
+def _migrate_tensor_shape_dtype(
+    model_tensor: ir.TensorProtocol, safe_tensor: ir.ExternalTensor
+) -> ir.ExternalTensor:
+    """Migrate the shape and dtype of a tensor.
+
+    Args:
+        model_tensor: The tensor to migrate.
+        safe_tensor: The tensor to migrate to.
+
+    Returns:
+        The migrated tensor.
+    """
+    if model_tensor.dtype in {
+        ir.DataType.FLOAT8E4M3FN,
+        ir.DataType.FLOAT8E5M2,
+        ir.DataType.FLOAT8E4M3FNUZ,
+        ir.DataType.FLOAT8E5M2FNUZ,
+    }:
+        return ir.ExternalTensor(
+            location=safe_tensor.location,
+            offset=safe_tensor.offset,
+            length=safe_tensor.length,
+            dtype=model_tensor.dtype,
+            shape=safe_tensor.shape,
+            name=safe_tensor.name,
+            base_dir=safe_tensor.base_dir,
+        )
+    if model_tensor.dtype in {ir.DataType.UINT4, ir.DataType.INT4}:
+        return ir.ExternalTensor(
+            location=safe_tensor.location,
+            offset=safe_tensor.offset,
+            length=safe_tensor.length,
+            dtype=model_tensor.dtype,
+            shape=model_tensor.shape,
+            name=safe_tensor.name,
+            base_dir=safe_tensor.base_dir,
+        )
+    return safe_tensor
