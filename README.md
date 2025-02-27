@@ -30,7 +30,7 @@ import onnx_safetensors
 model: onnx.ModelProto
 
 tensor_file = "path/to/onnx_model/model.safetensors"
-base_path = "path/to/onnx_model"
+base_dir = "path/to/onnx_model"
 data_path = "model.safetensors"
 
 # Apply weights from the safetensors file to the model and turn them to in memory tensor
@@ -39,11 +39,11 @@ model = onnx_safetensors.load_file(model, tensor_file)
 
 # If you want to use the safetensors file in ONNX Runtime:
 # Use safetensors as external data in the ONNX model
-model_with_external_data = onnx_safetensors.load_file_as_external_data(model, data_path, base_path=base_path)
+model_with_external_data = onnx_safetensors.load_file_as_external_data(model, data_path, base_dir=base_dir)
 
 # Save the modified model
 # This model is a valid ONNX model using external data from the safetensors file
-onnx.save(model_with_external_data, os.path.join(base_path, "model_using_safetensors.onnx"))
+onnx.save(model_with_external_data, os.path.join(base_dir, "model_using_safetensors.onnx"))
 ```
 
 ### Save weights to a safetensors file
@@ -54,17 +54,17 @@ import onnx_safetensors
 
 # Provide your ONNX model here
 model: onnx.ModelProto
-base_path = "path/to/onnx_model"
+base_dir = "path/to/onnx_model"
 data_path = "model.safetensors"
 
 # Offload weights from ONNX model to safetensors file without changing the model
-onnx_safetensors.save_file(model, data_path, base_path=base_path, replace_data=False)  # Generates model.safetensors
+onnx_safetensors.save_file(model, data_path, base_dir=base_dir, replace_data=False)  # Generates model.safetensors
 
 # If you want to use the safetensors file in ONNX Runtime:
 # Offload weights from ONNX model to safetensors file and use it as external data for the model by setting replace_data=True
-model_with_external_data = onnx_safetensors.save_file(model, data_path, base_path=base_path, replace_data=True)
+model_with_external_data = onnx_safetensors.save_file(model, data_path, base_dir=base_dir, replace_data=True)
 
 # Save the modified model
 # This model is a valid ONNX model using external data from the safetensors file
-onnx.save(model_with_external_data, os.path.join(base_path, "model_using_safetensors.onnx"))
+onnx.save(model_with_external_data, os.path.join(base_dir, "model_using_safetensors.onnx"))
 ```
