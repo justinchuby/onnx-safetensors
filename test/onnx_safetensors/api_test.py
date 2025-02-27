@@ -72,12 +72,26 @@ def _get_model_tensor_dict() -> dict[str, np.ndarray]:
     }
 
 
-class PublicAPITest(unittest.TestCase):
+def _create_test_ir_model(dtype: ir.DataType) -> ir.Model:
+    input_ = ir.Input(name="initializer_value", type=ir.TensorType(dtype), shape=ir.Shape((1,)))
+    input_.const_value = ir.tensor(6, dtype=dtype, name="initializer_value")
+
+    identity = ir.Node("", "Identity", [input_])
+    model = ir.Model(
+        ir.Graph(
+            (input_,),
+            identity.outputs,
+            nodes=(identity,),
+            opset_imports={"": 20},
+        ),
+        ir_version=10
+    )
+
+    return model
+
+
+class PublicApiTest(unittest.TestCase):
     def setUp(self) -> None:
-        self.model = _create_test_model()
-        self.model_ir = ir.serde.deserialize_model(self.model)
-        self.model_tensor_dict = _get_model_tensor_dict()
-        self.replacement_tensor_dict = _get_replacement_tensor_dict()
         self.temp_dir = tempfile.TemporaryDirectory()
         self.tensor_file_path = pathlib.Path(self.temp_dir.name) / "tensor.safetensors"
 
@@ -110,9 +124,21 @@ class PublicAPITest(unittest.TestCase):
         for key in tensors:
             np.testing.assert_array_equal(tensors[key], self.model_tensor_dict[key])
 
+
+class PublicIrApiTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.model = _create_test_ir_model()
+        self.model_tensor_dict = _get_model_tensor_dict()
+        self.replacement_tensor_dict = _get_replacement_tensor_dict()
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.tensor_file_path = pathlib.Path(self.temp_dir.name) / "tensor.safetensors"
+
+    def tearDown(self) -> None:
+        self.temp_dir.cleanup()
+
     def test_load_file_to_ir_model(self) -> None:
         safetensors.numpy.save_file(self.replacement_tensor_dict, self.tensor_file_path)
-        model = onnx_safetensors.load_file(self.model_ir, self.tensor_file_path)
+        model = onnx_safetensors.load_file(self.model, self.tensor_file_path)
 
         np.testing.assert_equal(
             model.graph.initializers["initializer_value"].const_value,
@@ -121,7 +147,7 @@ class PublicAPITest(unittest.TestCase):
 
     def test_load_to_ir_model(self) -> None:
         tensors = safetensors.numpy.save(self.replacement_tensor_dict)
-        model = onnx_safetensors.load(self.model_ir, tensors)
+        model = onnx_safetensors.load(self.model, tensors)
 
         np.testing.assert_equal(
             model.graph.initializers["initializer_value"].const_value,
@@ -129,7 +155,7 @@ class PublicAPITest(unittest.TestCase):
         )
 
     def test_save_file_from_ir_model(self) -> None:
-        _ = onnx_safetensors.save_file(self.model_ir, self.tensor_file_path)
+        _ = onnx_safetensors.save_file(self.model, self.tensor_file_path)
         tensors = safetensors.numpy.load_file(self.tensor_file_path)
         for key in tensors:
             np.testing.assert_array_equal(tensors[key], self.model_tensor_dict[key])
