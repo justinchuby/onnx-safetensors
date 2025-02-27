@@ -59,19 +59,19 @@ def _apply_tensors(model: ir.Model, tensors: Mapping[str, ir.TensorProtocol]):
 
 
 def replace_tensors(
-    model: ir.Model, /, location: str | os.PathLike, base_path: str | os.PathLike
+    model: ir.Model, /, location: str | os.PathLike, base_dir: str | os.PathLike
 ) -> None:
     """Replace all tensors in an ONNX model with external data from a safetensors file.
 
     Args:
         model: ONNX model to replace tensors in.
         location: Path to the safetensors file relative to the ONNX model file.
-        base_path: Directory where the ONNX model file is stored.
+        base_dir: Directory where the ONNX model file is stored.
 
     .. versionadded:: 1.0
         Added the function.
     """
-    tensors = _read_safetensors(location, base_path)
+    tensors = _read_safetensors(location, base_dir)
     _apply_tensors(model, tensors)
 
 
@@ -127,14 +127,14 @@ def load(model: TModel, /, data: bytes) -> TModel:
 
 
 def load_file_as_external_data(
-    model: TModel, /, location: str | os.PathLike, base_path: str | os.PathLike = ""
+    model: TModel, /, location: str | os.PathLike, base_dir: str | os.PathLike = ""
 ) -> TModel:
     """Load weights from safetensors file and use them as external data for the ONNX model.
 
     Args:
         model: ONNX model or graph to load external data into.
         location: Path to the safetensors file relative to the ONNX model file.
-        base_path: Directory where the ONNX model file is stored.
+        base_dir: Directory where the ONNX model file is stored.
 
     Returns:
         The ONNX model with the external data.
@@ -147,7 +147,7 @@ def load_file_as_external_data(
     else:
         model_ir = model
 
-    replace_tensors(model_ir, location, base_path)
+    replace_tensors(model_ir, location, base_dir)
 
     if isinstance(model, onnx.ModelProto):
         return ir.serde.serialize_model(model_ir)
@@ -184,7 +184,7 @@ def save_file(
     model: TModel,
     /,
     location: str | os.PathLike,
-    base_path: str | os.PathLike = "",
+    base_dir: str | os.PathLike = "",
     *,
     size_threshold: int = 0,
     replace_data: bool = True,
@@ -194,7 +194,7 @@ def save_file(
     Args:
         model: ONNX model proto to save.
         location: Path to the safetensors file relative to the ONNX model file.
-        base_path: Directory where the ONNX model file is stored.
+        base_dir: Directory where the ONNX model file is stored.
         size_threshold: Minimum size in bytes for a tensor to be saved.
             Default is 0, which saves all tensors.
         replace_data: Whether to replace the data in the ONNX model with
@@ -203,8 +203,8 @@ def save_file(
     Returns:
         The ONNX model with the external data.
 
-    .. versionadded:: 1.0
-        The *base_path* parameter was added so the external data can be referenced
+    .. versionadded:: 1.0.1
+        The *base_dir* parameter was added so the external data can be referenced
         relative to the ONNX model file correctly.
     .. versionadded:: 1.0
         The *replace_data* parameter was added to allow the user to choose
@@ -228,10 +228,10 @@ def save_file(
             continue
         tensor_dict[name] = initializer.const_value.numpy()
 
-    tensor_file = os.path.join(base_path, location)
+    tensor_file = os.path.join(base_dir, location)
     safetensors.numpy.save_file(tensor_dict, tensor_file)
     if replace_data:
-        replace_tensors(model_ir, location, base_path)
+        replace_tensors(model_ir, location, base_dir)
 
     if isinstance(model, onnx.ModelProto):
         return ir.serde.serialize_model(model_ir)
@@ -254,18 +254,18 @@ def _read_safetensors_header(file: io.IOBase) -> tuple[dict[str, dict[str, Any]]
 
 
 def _read_safetensors(
-    location: str | os.PathLike, base_path: str | os.PathLike
+    location: str | os.PathLike, base_dir: str | os.PathLike
 ) -> dict[str, ir.ExternalTensor]:
     """Read a safetensors file.
 
     Args:
         location: The safetensors file to read.
-        base_path: Directory where the ONNX model file is stored.
+        base_dir: Directory where the ONNX model file is stored.
 
     Returns:
         The contents of the safetensors file.
     """
-    path = os.path.join(base_path, location)
+    path = os.path.join(base_dir, location)
     with open(path, "rb") as file:
         header, header_size = _read_safetensors_header(file)
     tensors = {}
@@ -279,6 +279,6 @@ def _read_safetensors(
             dtype=_SAFETENSORS_TYPE_TO_IR_TYPE[metadata["dtype"]],
             shape=ir.Shape(metadata["shape"]),
             name=name,
-            base_dir=base_path,
+            base_dir=base_dir,
         )
     return tensors
