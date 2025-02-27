@@ -12,7 +12,7 @@ import onnx.numpy_helper
 import safetensors.numpy
 from onnxscript import ir
 
-from onnx_safetensors import _safetensors_io
+import onnx_safetensors
 
 
 def _create_tensor(value: Any, tensor_name: str) -> onnx.TensorProto:
@@ -72,7 +72,7 @@ def _get_model_tensor_dict() -> dict[str, np.ndarray]:
     }
 
 
-class SafeTensorsIoTest(unittest.TestCase):
+class PublicAPITest(unittest.TestCase):
     def setUp(self) -> None:
         self.model = _create_test_model()
         self.model_ir = ir.serde.deserialize_model(self.model)
@@ -86,7 +86,7 @@ class SafeTensorsIoTest(unittest.TestCase):
 
     def test_load_file_to_model(self) -> None:
         safetensors.numpy.save_file(self.replacement_tensor_dict, self.tensor_file_path)
-        proto = _safetensors_io.load_file(self.model, self.tensor_file_path)
+        proto = onnx_safetensors.load_file(self.model, self.tensor_file_path)
         model = ir.serde.deserialize_model(proto)
 
         np.testing.assert_equal(
@@ -96,7 +96,7 @@ class SafeTensorsIoTest(unittest.TestCase):
 
     def test_load_to_model(self) -> None:
         tensors = safetensors.numpy.save(self.replacement_tensor_dict)
-        proto = _safetensors_io.load(self.model, tensors)
+        proto = onnx_safetensors.load(self.model, tensors)
         model = ir.serde.deserialize_model(proto)
 
         np.testing.assert_equal(
@@ -105,14 +105,14 @@ class SafeTensorsIoTest(unittest.TestCase):
         )
 
     def test_save_file_from_model(self) -> None:
-        _ = _safetensors_io.save_file(self.model, self.tensor_file_path)
+        _ = onnx_safetensors.save_file(self.model, self.tensor_file_path)
         tensors = safetensors.numpy.load_file(self.tensor_file_path)
         for key in tensors:
             np.testing.assert_array_equal(tensors[key], self.model_tensor_dict[key])
 
     def test_load_file_to_ir_model(self) -> None:
         safetensors.numpy.save_file(self.replacement_tensor_dict, self.tensor_file_path)
-        model = _safetensors_io.load_file(self.model_ir, self.tensor_file_path)
+        model = onnx_safetensors.load_file(self.model_ir, self.tensor_file_path)
 
         np.testing.assert_equal(
             model.graph.initializers["initializer_value"].const_value,
@@ -121,7 +121,7 @@ class SafeTensorsIoTest(unittest.TestCase):
 
     def test_load_to_ir_model(self) -> None:
         tensors = safetensors.numpy.save(self.replacement_tensor_dict)
-        model = _safetensors_io.load(self.model_ir, tensors)
+        model = onnx_safetensors.load(self.model_ir, tensors)
 
         np.testing.assert_equal(
             model.graph.initializers["initializer_value"].const_value,
@@ -129,7 +129,7 @@ class SafeTensorsIoTest(unittest.TestCase):
         )
 
     def test_save_file_from_ir_model(self) -> None:
-        _ = _safetensors_io.save_file(self.model_ir, self.tensor_file_path)
+        _ = onnx_safetensors.save_file(self.model_ir, self.tensor_file_path)
         tensors = safetensors.numpy.load_file(self.tensor_file_path)
         for key in tensors:
             np.testing.assert_array_equal(tensors[key], self.model_tensor_dict[key])
