@@ -3,8 +3,8 @@ merge_base_with = 'main'
 [[linter]]
 code = 'RUFF'
 include_patterns = [
-    '**/*.py',
-    '**/*.pyi',
+    'src/**/*.py',
+    'src/**/*.pyi',
 ]
 exclude_patterns = []
 command = [

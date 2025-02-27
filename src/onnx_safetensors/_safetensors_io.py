@@ -19,7 +19,9 @@ if TYPE_CHECKING:
     pass
 
 
-_SAFETENSORS_TYPE_TO_IR_TYPE = {
+_HEADER_SIZE_NUMBER_SIZE = 8
+# https://github.com/huggingface/safetensors/blob/543243c3017e413584f27ebd4b99c844f62deb34/safetensors/src/tensor.rs#L664
+_SAFETENSORS_DTYPE_TO_IR_DTYPE = {
     "BOOL": ir.DataType.BOOL,
     "F8_E5M2": ir.DataType.FLOAT8E5M2,
     "F8_E4M3": ir.DataType.FLOAT8E4M3FN,
@@ -27,18 +29,37 @@ _SAFETENSORS_TYPE_TO_IR_TYPE = {
     "F16": ir.DataType.FLOAT16,
     "F32": ir.DataType.FLOAT,
     "F64": ir.DataType.DOUBLE,
-    "I4": ir.DataType.INT4,
     "I8": ir.DataType.INT8,
     "I16": ir.DataType.INT16,
     "I32": ir.DataType.INT32,
     "I64": ir.DataType.INT64,
-    "U4": ir.DataType.UINT4,
     "U8": ir.DataType.UINT8,
     "U16": ir.DataType.UINT16,
     "U32": ir.DataType.UINT32,
     "U64": ir.DataType.UINT64,
 }
-_HEADER_SIZE_NUMBER_SIZE = 8
+_IR_DTYPE_TO_SAFETENSORS_DTYPE = {
+    ir.DataType.BOOL: "BOOL",
+    ir.DataType.FLOAT4E2M1: "U8",
+    ir.DataType.FLOAT8E5M2: "F8_E5M2",
+    ir.DataType.FLOAT8E4M3FN: "F8_E4M3",
+    ir.DataType.FLOAT8E4M3FNUZ: "U8",
+    ir.DataType.FLOAT8E5M2FNUZ: "U8",
+    ir.DataType.BFLOAT16: "BF16",
+    ir.DataType.FLOAT16: "F16",
+    ir.DataType.FLOAT: "F32",
+    ir.DataType.DOUBLE: "F64",
+    ir.DataType.INT4: "U8",
+    ir.DataType.INT8: "I8",
+    ir.DataType.INT16: "I16",
+    ir.DataType.INT32: "I32",
+    ir.DataType.INT64: "I64",
+    ir.DataType.UINT4: "U8",
+    ir.DataType.UINT8: "U8",
+    ir.DataType.UINT16: "U16",
+    ir.DataType.UINT32: "U32",
+    ir.DataType.UINT64: "U64",
+}
 
 
 TModel = TypeVar("TModel", onnx.ModelProto, ir.Model)
@@ -68,6 +89,24 @@ def _apply_tensors(
         else:
             updated_tensor = tensor
         graph.initializers[name].const_value = updated_tensor
+
+
+def _get_bytes(tensor: ir.TensorProtocol) -> bytes | memoryview:
+    """Get the bytes of a tensor.
+
+    Args:
+        tensor: Tensor to get bytes from.
+
+    Returns:
+        Bytes of the tensor.
+    """
+    if tensor.dtype in {
+        ir.DataType.FLOAT4E2M1,
+        ir.DataType.INT4,
+        ir.DataType.UINT4,
+    }:
+        return tensor.tobytes()
+    return memoryview(tensor.numpy())
 
 
 def replace_tensors(
@@ -181,14 +220,19 @@ def save(model: TModel, /, *, size_threshold: int = 0) -> bytes:
     else:
         model_ir = model
 
-    tensor_dict = {}
+    tensor_dict: dict[str, dict[str, Any]] = {}
     for name, initializer in model_ir.graph.initializers.items():
         if initializer.const_value is None:
             continue
         if initializer.const_value.size < size_threshold:
             continue
-        tensor_dict[name] = initializer.const_value.numpy()
-    return safetensors.numpy.save(tensor_dict)
+        tensor = initializer.const_value
+        tensor_dict[name] = {
+            "dtype": _IR_DTYPE_TO_SAFETENSORS_DTYPE[tensor.dtype],
+            "shape": tensor.shape.numpy(),
+            "data": _get_bytes(tensor),
+        }
+    return safetensors.serialize(tensor_dict)
 
 
 def save_file(
@@ -237,10 +281,14 @@ def save_file(
             continue
         if initializer.const_value.size < size_threshold:
             continue
-        tensor_dict[name] = initializer.const_value.numpy()
-
+        tensor = initializer.const_value
+        tensor_dict[name] = {
+            "dtype": _IR_DTYPE_TO_SAFETENSORS_DTYPE[tensor.dtype],
+            "shape": tensor.shape.numpy(),
+            "data": _get_bytes(tensor),
+        }
     tensor_file = os.path.join(base_dir, location)
-    safetensors.numpy.save_file(tensor_dict, tensor_file)
+    safetensors.serialize_file(tensor_dict, tensor_file)
     if replace_data:
         replace_tensors(model_ir, location, base_dir)
 
@@ -287,7 +335,7 @@ def _read_safetensors(
             location=location,
             offset=offset,
             length=length,
-            dtype=_SAFETENSORS_TYPE_TO_IR_TYPE[metadata["dtype"]],
+            dtype=_SAFETENSORS_DTYPE_TO_IR_DTYPE[metadata["dtype"]],
             shape=ir.Shape(metadata["shape"]),
             name=name,
             base_dir=base_dir,
@@ -301,8 +349,8 @@ def _check_tensors_match(
     """Check if two tensors match.
 
     Args:
-        a: The first tensor.
-        b: The second tensor.
+        model_tensor: Tensor from the model.
+        safe_tensor: Tensor from the safetensors file.
 
     Raises:
         ValueError: If the tensors do not match.
