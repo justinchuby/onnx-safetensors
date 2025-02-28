@@ -191,6 +191,40 @@ class PublicIrApiTest(unittest.TestCase):
             (ir.DataType.FLOAT4E2M1.name, ir.DataType.FLOAT4E2M1),
         ]
     )
+    def test_save_from_ir_model(self, _: str, dtype: ir.DataType) -> None:
+        model = _create_test_ir_model(dtype)
+        data = onnx_safetensors.save(model)
+        tensors = safetensors.deserialize(data)
+        tensor = ir.tensor([0, 1, 6], dtype=dtype)
+        self.assertEqual(tensors[0][1]["data"], tensor.tobytes())
+
+    @parameterized.parameterized.expand(
+        [
+            (ir.DataType.FLOAT.name, ir.DataType.FLOAT),
+            (ir.DataType.UINT8.name, ir.DataType.UINT8),
+            (ir.DataType.INT8.name, ir.DataType.INT8),
+            (ir.DataType.UINT16.name, ir.DataType.UINT16),
+            (ir.DataType.INT16.name, ir.DataType.INT16),
+            (ir.DataType.INT32.name, ir.DataType.INT32),
+            (ir.DataType.INT64.name, ir.DataType.INT64),
+            (ir.DataType.BOOL.name, ir.DataType.BOOL),
+            (ir.DataType.FLOAT16.name, ir.DataType.FLOAT16),
+            (ir.DataType.DOUBLE.name, ir.DataType.DOUBLE),
+            (ir.DataType.UINT32.name, ir.DataType.UINT32),
+            (ir.DataType.UINT64.name, ir.DataType.UINT64),
+            # (ir.DataType.COMPLEX64.name, ir.DataType.COMPLEX64) ,
+            # (ir.DataType.COMPLEX128.name, ir.DataType.COMPLEX128) ,
+            (ir.DataType.BFLOAT16.name, ir.DataType.BFLOAT16),
+            (ir.DataType.FLOAT8E4M3FN.name, ir.DataType.FLOAT8E4M3FN),
+            # (ir.DataType.FLOAT8E4M3FNUZ.name, ir.DataType.FLOAT8E4M3FNUZ),
+            # TODO: FLOAT8E4M3FNUZ support in ONNX IR was fixed in 0.3. Enable when it is released
+            (ir.DataType.FLOAT8E5M2.name, ir.DataType.FLOAT8E5M2),
+            (ir.DataType.FLOAT8E5M2FNUZ.name, ir.DataType.FLOAT8E5M2FNUZ),
+            (ir.DataType.UINT4.name, ir.DataType.UINT4),
+            (ir.DataType.INT4.name, ir.DataType.INT4),
+            (ir.DataType.FLOAT4E2M1.name, ir.DataType.FLOAT4E2M1),
+        ]
+    )
     def test_save_file_from_ir_model(self, _: str, dtype: ir.DataType) -> None:
         model = _create_test_ir_model(dtype)
         _ = onnx_safetensors.save_file(model, self.tensor_file_path)
