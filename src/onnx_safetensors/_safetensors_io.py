@@ -384,7 +384,10 @@ def _check_tensors_match(
         return
 
     if _is_8bit_float(model_tensor.dtype):
-        if not _is_8bit_float(safe_tensor.dtype) and safe_tensor.dtype != ir.DataType.UINT8:
+        if (
+            not _is_8bit_float(safe_tensor.dtype)
+            and safe_tensor.dtype != ir.DataType.UINT8
+        ):
             raise ValueError(
                 f"The tensor from safetensors has dtype: {safe_tensor.dtype}, but it must be UINT8 to "
                 f"represent the dtype of the tensor in the model: {model_tensor.dtype}."

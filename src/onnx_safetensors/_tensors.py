@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import abc
-from typing import Any
-from onnxscript import ir
 import math
+from typing import Any
+
 import numpy as np
+from onnxscript import ir
 
 from onnx_safetensors import _metadata, _type_casting
+
 
 class _TensorBase(abc.ABC, ir.TensorProtocol):
     """Convenience Shared methods for classes implementing TensorProtocol."""
