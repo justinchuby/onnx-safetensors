@@ -8,6 +8,12 @@
 
 ONNX extension for saving to and loading from safetensors 🤗.
 
+## Features
+
+- ✅ Load and save ONNX weights from and to safetensors
+- ✅ Support all ONNX data types, including float8, float4 and 4-bit ints
+- ✅ Allow ONNX backends (including ONNX Runtime) to use safetensors
+
 ## Install
 
 ```sh
