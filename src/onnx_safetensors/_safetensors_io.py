@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import io
 import json
+import math
 import os
 import struct
 from collections.abc import Mapping
@@ -39,26 +40,26 @@ _SAFETENSORS_DTYPE_TO_IR_DTYPE = {
     "U64": ir.DataType.UINT64,
 }
 _IR_DTYPE_TO_SAFETENSORS_DTYPE = {
-    ir.DataType.BOOL: "BOOL",
+    ir.DataType.BOOL: "bool",
     ir.DataType.FLOAT4E2M1: "uint8",
-    ir.DataType.FLOAT8E5M2: "F8_E5M2",
-    ir.DataType.FLOAT8E4M3FN: "F8_E4M3",
+    ir.DataType.FLOAT8E5M2: "float8_e5m2",
+    ir.DataType.FLOAT8E4M3FN: "float8_e4m3fn",
     ir.DataType.FLOAT8E4M3FNUZ: "uint8",
     ir.DataType.FLOAT8E5M2FNUZ: "uint8",
-    ir.DataType.BFLOAT16: "BF16",
-    ir.DataType.FLOAT16: "F16",
-    ir.DataType.FLOAT: "F32",
-    ir.DataType.DOUBLE: "F64",
+    ir.DataType.BFLOAT16: "bfloat16",
+    ir.DataType.FLOAT16: "float16",
+    ir.DataType.FLOAT: "float32",
+    ir.DataType.DOUBLE: "float64",
     ir.DataType.INT4: "uint8",
-    ir.DataType.INT8: "I8",
-    ir.DataType.INT16: "I16",
-    ir.DataType.INT32: "I32",
-    ir.DataType.INT64: "I64",
+    ir.DataType.INT8: "int8",
+    ir.DataType.INT16: "int16",
+    ir.DataType.INT32: "int32",
+    ir.DataType.INT64: "int64",
     ir.DataType.UINT4: "uint8",
     ir.DataType.UINT8: "uint8",
-    ir.DataType.UINT16: "U16",
-    ir.DataType.UINT32: "U32",
-    ir.DataType.UINT64: "U64",
+    ir.DataType.UINT16: "uint16",
+    ir.DataType.UINT32: "uint32",
+    ir.DataType.UINT64: "uint64",
 }
 
 
@@ -91,22 +92,12 @@ def _apply_tensors(
         graph.initializers[name].const_value = updated_tensor
 
 
-def _get_bytes(tensor: ir.TensorProtocol) -> bytes | memoryview:
-    """Get the bytes of a tensor.
-
-    Args:
-        tensor: Tensor to get bytes from.
-
-    Returns:
-        Bytes of the tensor.
-    """
-    if tensor.dtype in {
-        ir.DataType.FLOAT4E2M1,
-        ir.DataType.INT4,
+def _is_4bit(dtype: ir.DataType) -> bool:
+    return dtype in {
         ir.DataType.UINT4,
-    }:
-        return tensor.tobytes()
-    return tensor.numpy().data
+        ir.DataType.INT4,
+        ir.DataType.FLOAT4E2M1,
+    }
 
 
 def replace_tensors(
@@ -204,6 +195,12 @@ def load_file_as_external_data(
     return model_ir
 
 
+def _get_tensor_storage_shape(tensor: ir.TensorProtocol) -> list[int]:
+    if _is_4bit(tensor.dtype):
+        return [math.ceil(math.prod(tensor.shape.numpy()) / 2)]
+    return tensor.shape.numpy()
+
+
 def save(model: TModel, /, *, size_threshold: int = 0) -> bytes:
     """Save all tensors in an ONNX model to a safetensors object serialized as bytes.
 
@@ -229,8 +226,9 @@ def save(model: TModel, /, *, size_threshold: int = 0) -> bytes:
         tensor = initializer.const_value
         tensor_dict[name] = {
             "dtype": _IR_DTYPE_TO_SAFETENSORS_DTYPE[tensor.dtype],
-            "shape": tensor.shape.numpy(),
-            "data": _get_bytes(tensor),
+            "shape": _get_tensor_storage_shape(tensor),
+            # TODO: Return a memoryview when safetensors supports it.
+            "data": tensor.tobytes(),
         }
     return safetensors.serialize(tensor_dict)
 
@@ -284,8 +282,9 @@ def save_file(
         tensor = initializer.const_value
         tensor_dict[name] = {
             "dtype": _IR_DTYPE_TO_SAFETENSORS_DTYPE[tensor.dtype],
-            "shape": tensor.shape.numpy(),
-            "data": _get_bytes(tensor),
+            "shape": _get_tensor_storage_shape(tensor),
+            # TODO: Return a memoryview when safetensors supports it.
+            "data": tensor.tobytes(),
         }
     tensor_file = os.path.join(base_dir, location)
     safetensors.serialize_file(tensor_dict, tensor_file)
@@ -372,7 +371,7 @@ def _check_tensors_match(
                 f"The tensor from safetensors has dtype: {safe_tensor.dtype}, "
                 f"which does not match the dtype of the tensor in the model: {model_tensor.dtype}."
             )
-    elif model_tensor.dtype in {ir.DataType.UINT4, ir.DataType.INT4}:
+    elif _is_4bit(model_tensor.dtype):
         if safe_tensor.dtype != ir.DataType.UINT8:
             raise ValueError(
                 f"The tensor from safetensors has dtype: {safe_tensor.dtype}, but it must be UINT8 to "
@@ -408,21 +407,11 @@ def _migrate_tensor_shape_dtype(
         The migrated tensor.
     """
     if model_tensor.dtype in {
-        ir.DataType.FLOAT8E4M3FN,
-        ir.DataType.FLOAT8E5M2,
+        # ir.DataType.FLOAT8E4M3FN,
+        # ir.DataType.FLOAT8E5M2,
         ir.DataType.FLOAT8E4M3FNUZ,
         ir.DataType.FLOAT8E5M2FNUZ,
-    }:
-        return ir.ExternalTensor(
-            location=safe_tensor.location,
-            offset=safe_tensor.offset,
-            length=safe_tensor.length,
-            dtype=model_tensor.dtype,
-            shape=safe_tensor.shape,
-            name=safe_tensor.name,
-            base_dir=safe_tensor.base_dir,
-        )
-    if model_tensor.dtype in {ir.DataType.UINT4, ir.DataType.INT4}:
+    } or _is_4bit(model_tensor.dtype):
         return ir.ExternalTensor(
             location=safe_tensor.location,
             offset=safe_tensor.offset,
