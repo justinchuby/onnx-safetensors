@@ -200,8 +200,5 @@ class PublicIrApiTest(unittest.TestCase):
         self.assertEqual(tensors[0][1]["data"], tensor.tobytes())
 
 
-# TODO: Test all ONNX data types
-
-
 if __name__ == "__main__":
     unittest.main()
