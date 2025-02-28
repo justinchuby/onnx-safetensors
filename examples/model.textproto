@@ -1,0 +1,54 @@
+ir_version: 10
+producer_name: "onnx-safetensors-example"
+graph {
+  node {
+    input: "input"
+    input: "weights"
+    output: "output"
+    op_type: "Add"
+  }
+  name: "SimpleGraph"
+  initializer {
+    dims: 3
+    data_type: 1
+    float_data: 1.0
+    float_data: 2.0
+    float_data: 3.0
+    name: "weights"
+  }
+  input {
+    name: "input"
+    type {
+      tensor_type {
+        elem_type: 1
+        shape {
+          dim {
+            dim_value: 1
+          }
+          dim {
+            dim_value: 3
+          }
+        }
+      }
+    }
+  }
+  output {
+    name: "output"
+    type {
+      tensor_type {
+        elem_type: 1
+        shape {
+          dim {
+            dim_value: 1
+          }
+          dim {
+            dim_value: 3
+          }
+        }
+      }
+    }
+  }
+}
+opset_import {
+  version: 22
+}
