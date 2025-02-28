@@ -9,10 +9,11 @@ import numpy as np
 import onnx
 import onnx.helper
 import onnx.numpy_helper
+import parameterized
 import safetensors.numpy
 from onnxscript import ir
 
-from onnx_safetensors import _safetensors_io
+import onnx_safetensors
 
 
 def _create_tensor(value: Any, tensor_name: str) -> onnx.TensorProto:
@@ -72,10 +73,9 @@ def _get_model_tensor_dict() -> dict[str, np.ndarray]:
     }
 
 
-class SafeTensorsIoTest(unittest.TestCase):
+class PublicApiTest(unittest.TestCase):
     def setUp(self) -> None:
         self.model = _create_test_model()
-        self.model_ir = ir.serde.deserialize_model(self.model)
         self.model_tensor_dict = _get_model_tensor_dict()
         self.replacement_tensor_dict = _get_replacement_tensor_dict()
         self.temp_dir = tempfile.TemporaryDirectory()
@@ -86,7 +86,7 @@ class SafeTensorsIoTest(unittest.TestCase):
 
     def test_load_file_to_model(self) -> None:
         safetensors.numpy.save_file(self.replacement_tensor_dict, self.tensor_file_path)
-        proto = _safetensors_io.load_file(self.model, self.tensor_file_path)
+        proto = onnx_safetensors.load_file(self.model, self.tensor_file_path)
         model = ir.serde.deserialize_model(proto)
 
         np.testing.assert_equal(
@@ -96,7 +96,7 @@ class SafeTensorsIoTest(unittest.TestCase):
 
     def test_load_to_model(self) -> None:
         tensors = safetensors.numpy.save(self.replacement_tensor_dict)
-        proto = _safetensors_io.load(self.model, tensors)
+        proto = onnx_safetensors.load(self.model, tensors)
         model = ir.serde.deserialize_model(proto)
 
         np.testing.assert_equal(
@@ -105,14 +105,48 @@ class SafeTensorsIoTest(unittest.TestCase):
         )
 
     def test_save_file_from_model(self) -> None:
-        _ = _safetensors_io.save_file(self.model, self.tensor_file_path)
+        _ = onnx_safetensors.save_file(self.model, self.tensor_file_path)
         tensors = safetensors.numpy.load_file(self.tensor_file_path)
         for key in tensors:
             np.testing.assert_array_equal(tensors[key], self.model_tensor_dict[key])
 
+
+def _create_test_ir_model(dtype: ir.DataType) -> ir.Model:
+    input_ = ir.Input(
+        name="initializer_value", type=ir.TensorType(dtype), shape=ir.Shape((3,))
+    )
+    input_.const_value = ir.tensor([0, 1, 6], dtype=dtype, name="initializer_value")
+
+    identity = ir.Node("", "Identity", [input_])
+    model = ir.Model(
+        ir.Graph(
+            (input_,),
+            identity.outputs,
+            nodes=(identity,),
+            initializers=(input_,),
+            opset_imports={"": 20},
+        ),
+        ir_version=10,
+    )
+
+    return model
+
+
+class PublicIrApiTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.model_tensor_dict = _get_model_tensor_dict()
+        self.replacement_tensor_dict = _get_replacement_tensor_dict()
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.tensor_file_path = pathlib.Path(self.temp_dir.name) / "tensor.safetensors"
+
+    def tearDown(self) -> None:
+        self.temp_dir.cleanup()
+
     def test_load_file_to_ir_model(self) -> None:
         safetensors.numpy.save_file(self.replacement_tensor_dict, self.tensor_file_path)
-        model = _safetensors_io.load_file(self.model_ir, self.tensor_file_path)
+        proto = _create_test_model()
+        model = ir.from_proto(proto)
+        model = onnx_safetensors.load_file(model, self.tensor_file_path)
 
         np.testing.assert_equal(
             model.graph.initializers["initializer_value"].const_value,
@@ -121,21 +155,49 @@ class SafeTensorsIoTest(unittest.TestCase):
 
     def test_load_to_ir_model(self) -> None:
         tensors = safetensors.numpy.save(self.replacement_tensor_dict)
-        model = _safetensors_io.load(self.model_ir, tensors)
+        proto = _create_test_model()
+        model = ir.from_proto(proto)
+        model = onnx_safetensors.load(model, tensors)
 
         np.testing.assert_equal(
             model.graph.initializers["initializer_value"].const_value,
             self.replacement_tensor_dict["initializer_value"],
         )
 
-    def test_save_file_from_ir_model(self) -> None:
-        _ = _safetensors_io.save_file(self.model_ir, self.tensor_file_path)
-        tensors = safetensors.numpy.load_file(self.tensor_file_path)
-        for key in tensors:
-            np.testing.assert_array_equal(tensors[key], self.model_tensor_dict[key])
-
-
-# TODO: Test all ONNX data types
+    @parameterized.parameterized.expand(
+        [
+            (ir.DataType.FLOAT.name, ir.DataType.FLOAT),
+            (ir.DataType.UINT8.name, ir.DataType.UINT8),
+            (ir.DataType.INT8.name, ir.DataType.INT8),
+            (ir.DataType.UINT16.name, ir.DataType.UINT16),
+            (ir.DataType.INT16.name, ir.DataType.INT16),
+            (ir.DataType.INT32.name, ir.DataType.INT32),
+            (ir.DataType.INT64.name, ir.DataType.INT64),
+            (ir.DataType.BOOL.name, ir.DataType.BOOL),
+            (ir.DataType.FLOAT16.name, ir.DataType.FLOAT16),
+            (ir.DataType.DOUBLE.name, ir.DataType.DOUBLE),
+            (ir.DataType.UINT32.name, ir.DataType.UINT32),
+            (ir.DataType.UINT64.name, ir.DataType.UINT64),
+            # (ir.DataType.COMPLEX64.name, ir.DataType.COMPLEX64) ,
+            # (ir.DataType.COMPLEX128.name, ir.DataType.COMPLEX128) ,
+            (ir.DataType.BFLOAT16.name, ir.DataType.BFLOAT16),
+            (ir.DataType.FLOAT8E4M3FN.name, ir.DataType.FLOAT8E4M3FN),
+            # (ir.DataType.FLOAT8E4M3FNUZ.name, ir.DataType.FLOAT8E4M3FNUZ),
+            # TODO: FLOAT8E4M3FNUZ support in ONNX IR was fixed in 0.3. Enable when it is released
+            (ir.DataType.FLOAT8E5M2.name, ir.DataType.FLOAT8E5M2),
+            (ir.DataType.FLOAT8E5M2FNUZ.name, ir.DataType.FLOAT8E5M2FNUZ),
+            (ir.DataType.UINT4.name, ir.DataType.UINT4),
+            (ir.DataType.INT4.name, ir.DataType.INT4),
+            (ir.DataType.FLOAT4E2M1.name, ir.DataType.FLOAT4E2M1),
+        ]
+    )
+    def test_save_file_from_ir_model(self, _: str, dtype: ir.DataType) -> None:
+        model = _create_test_ir_model(dtype)
+        _ = onnx_safetensors.save_file(model, self.tensor_file_path)
+        with open(self.tensor_file_path, "rb") as f:
+            tensors = safetensors.deserialize(f.read())
+        tensor = ir.tensor([0, 1, 6], dtype=dtype)
+        self.assertEqual(tensors[0][1]["data"], tensor.tobytes())
 
 
 if __name__ == "__main__":
