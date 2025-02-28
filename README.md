@@ -68,3 +68,7 @@ model_with_external_data = onnx_safetensors.save_file(model, data_path, base_dir
 # This model is a valid ONNX model using external data from the safetensors file
 onnx.save(model_with_external_data, os.path.join(base_dir, "model_using_safetensors.onnx"))
 ```
+
+## Examples
+
+- [Tutorial notebook](examples/tutorial.ipynb)
