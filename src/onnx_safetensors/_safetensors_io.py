@@ -10,14 +10,12 @@ import struct
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, TypeVar
 
-import numpy as np
 import onnx
 import onnx.helper
 import safetensors
 from onnxscript import ir
-from onnxscript.ir import _metadata
 
-from onnx_safetensors import _type_casting
+from onnx_safetensors import _tensors
 
 if TYPE_CHECKING:
     pass
@@ -69,89 +67,6 @@ _IR_DTYPE_TO_SAFETENSORS_DTYPE = {
 TModel = TypeVar("TModel", onnx.ModelProto, ir.Model)
 
 
-class ByteArrayTensor(ir._core.TensorBase):
-    """A tensor initialized from a bytes."""
-
-    def __init__(
-        self,
-        data: bytearray,
-        dtype: ir.DataType,
-        shape: ir.Shape,
-        name: str = "",
-        doc_string: str = "",
-    ) -> None:
-        self.raw = data
-        self.name = name
-        self.doc_string = doc_string
-        self._dtype = dtype
-        self._shape = shape
-        self._metadata: _metadata.MetadataStore | None = None
-        self._metadata_props = None
-
-    @property
-    def shape(self) -> ir.Shape:
-        return self._shape
-
-    @property
-    def dtype(self) -> ir.DataType:
-        return self._dtype
-
-    def __repr__(self) -> str:
-        # It is a little hard to display the content when there can be types
-        # unsupported by numpy
-        # Preferably we should display some content when the tensor is small
-        return f"{self._repr_base()}(name={self.name!r})"
-
-    def __array__(self, dtype: Any = None) -> np.ndarray:
-        """Return the tensor as a numpy array, compatible with np.array."""
-        return self.numpy().__array__(dtype)
-
-    def __dlpack__(self, *, stream: Any = None) -> Any:
-        return self.numpy().__dlpack__(stream=stream)
-
-    def __dlpack_device__(self) -> tuple[int, int]:
-        return self.numpy().__dlpack_device__()
-
-    def numpy(self) -> np.ndarray:
-        dtype = self.dtype
-        if dtype == ir.DataType.UNDEFINED:
-            raise ValueError("Cannot convert UNDEFINED tensor to numpy array.")
-
-        array = np.frombuffer(self.raw, dtype=dtype.numpy().newbyteorder("<"))
-        # Cannot return now, because we may need to unpack 4bit tensors
-        shape = self._shape.numpy()
-        if dtype == ir.DataType.INT4:
-            return _type_casting.unpack_int4(array.astype(np.uint8), shape)
-        elif dtype == ir.DataType.UINT4:
-            return _type_casting.unpack_uint4(array.astype(np.uint8), shape)
-        elif dtype == ir.DataType.FLOAT4E2M1:
-            return _type_casting.unpack_float4e2m1(array.astype(np.uint8), shape)
-        else:
-            # Otherwise convert to the correct dtype and reshape
-            # Note we cannot use view() here because the storage dtype may not be the same size as the target
-            return array.reshape(shape)
-
-    def tobytes(self) -> bytes:
-        return bytes(self.raw)
-
-    @property
-    def meta(self) -> _metadata.MetadataStore:
-        """The metadata store for intermediate analysis.
-
-        Write to the :attr:`metadata_props` if you would like the metadata to be serialized
-        to the ONNX proto.
-        """
-        if self._metadata is None:
-            self._metadata = _metadata.MetadataStore()
-        return self._metadata
-
-    @property
-    def metadata_props(self) -> dict[str, str]:
-        if self._metadata_props is None:
-            self._metadata_props = {}
-        return self._metadata_props
-
-
 def _apply_tensors(
     model: ir.Model,
     tensors: Mapping[str, ir.TensorProtocol],
@@ -183,6 +98,15 @@ def _is_4bit(dtype: ir.DataType) -> bool:
         ir.DataType.UINT4,
         ir.DataType.INT4,
         ir.DataType.FLOAT4E2M1,
+    }
+
+
+def _is_8bit_float(dtype: ir.DataType) -> bool:
+    return dtype in {
+        ir.DataType.FLOAT8E4M3FN,
+        ir.DataType.FLOAT8E5M2,
+        ir.DataType.FLOAT8E4M3FNUZ,
+        ir.DataType.FLOAT8E5M2FNUZ,
     }
 
 
@@ -244,7 +168,7 @@ def load(model: TModel, /, data: bytes) -> TModel:
     # TODO: Handle more dtypes
     tensors = safetensors.deserialize(data)
     tensors_dict = {
-        name: ByteArrayTensor(
+        name: _tensors.ByteArrayTensor(
             data=metadata["data"],
             dtype=_SAFETENSORS_DTYPE_TO_IR_DTYPE[metadata["dtype"]],
             shape=ir.Shape(metadata["shape"]),
@@ -446,43 +370,35 @@ def _check_tensors_match(
     Raises:
         ValueError: If the tensors do not match.
     """
-    if model_tensor.dtype in {
-        ir.DataType.FLOAT8E4M3FN,
-        ir.DataType.FLOAT8E5M2,
-        ir.DataType.FLOAT8E4M3FNUZ,
-        ir.DataType.FLOAT8E5M2FNUZ,
-    }:
-        if safe_tensor.dtype not in {
-            ir.DataType.FLOAT8E4M3FN,
-            ir.DataType.FLOAT8E5M2,
-            ir.DataType.FLOAT8E4M3FNUZ,
-            ir.DataType.FLOAT8E5M2FNUZ,
-            ir.DataType.UINT8,
-        }:
-            raise ValueError(
-                f"The tensor from safetensors has dtype: {safe_tensor.dtype}, "
-                f"which does not match the dtype of the tensor in the model: {model_tensor.dtype}."
-            )
-    elif _is_4bit(model_tensor.dtype):
+    if _is_4bit(model_tensor.dtype):
         if safe_tensor.dtype != ir.DataType.UINT8:
             raise ValueError(
                 f"The tensor from safetensors has dtype: {safe_tensor.dtype}, but it must be UINT8 to "
                 f"represent the dtype of the tensor in the model: {model_tensor.dtype}."
             )
-    elif model_tensor.dtype != safe_tensor.dtype:
+        if model_tensor.nbytes != safe_tensor.nbytes:
+            raise ValueError(
+                f"The tensor from safetensors has size: {safe_tensor.nbytes} bytes, "
+                f"which does not match the size of the tensor in the model: {model_tensor.nbytes} bytes."
+            )
+        return
+
+    if (
+        _is_8bit_float(model_tensor.dtype)
+        and (
+            not _is_8bit_float(safe_tensor.dtype)
+            and safe_tensor.dtype != ir.DataType.UINT8
+        )
+    ) or model_tensor.dtype != safe_tensor.dtype:
         raise ValueError(
             f"The tensor from safetensors has dtype: {safe_tensor.dtype}, "
             f"which does not match the dtype of the tensor in the model: {model_tensor.dtype}."
         )
-    elif model_tensor.shape != safe_tensor.shape:
+
+    if model_tensor.shape != safe_tensor.shape:
         raise ValueError(
             f"The tensor from safetensors has shape: {safe_tensor.shape}, "
             f"which does not match the shape of the tensor in the model: {model_tensor.shape}."
-        )
-    elif model_tensor.nbytes != safe_tensor.nbytes:
-        raise ValueError(
-            f"The tensor from safetensors has size: {safe_tensor.nbytes} bytes, "
-            f"which does not match the size of the tensor in the model: {model_tensor.nbytes} bytes."
         )
 
 
