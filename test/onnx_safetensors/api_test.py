@@ -182,8 +182,7 @@ class PublicIrApiTest(unittest.TestCase):
             # (ir.DataType.COMPLEX128.name, ir.DataType.COMPLEX128) ,
             (ir.DataType.BFLOAT16.name, ir.DataType.BFLOAT16),
             (ir.DataType.FLOAT8E4M3FN.name, ir.DataType.FLOAT8E4M3FN),
-            # (ir.DataType.FLOAT8E4M3FNUZ.name, ir.DataType.FLOAT8E4M3FNUZ),
-            # TODO: FLOAT8E4M3FNUZ support in ONNX IR was fixed in 0.3. Enable when it is released
+            (ir.DataType.FLOAT8E4M3FNUZ.name, ir.DataType.FLOAT8E4M3FNUZ),
             (ir.DataType.FLOAT8E5M2.name, ir.DataType.FLOAT8E5M2),
             (ir.DataType.FLOAT8E5M2FNUZ.name, ir.DataType.FLOAT8E5M2FNUZ),
             (ir.DataType.UINT4.name, ir.DataType.UINT4),

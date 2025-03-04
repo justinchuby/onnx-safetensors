@@ -32,7 +32,7 @@ dependencies = [
   "numpy",
   "onnx>=1.16",
   "safetensors",
-  "onnxscript>=0.1.0",
+  "onnxscript>=0.2.2",
 ]
 
 [project.urls]
