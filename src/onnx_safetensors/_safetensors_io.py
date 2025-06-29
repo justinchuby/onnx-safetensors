@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, Any, TypeVar
 import onnx
 import onnx.helper
 import safetensors
-from onnxscript import ir
+import onnx_ir as ir
 
 from onnx_safetensors import _tensors
 
