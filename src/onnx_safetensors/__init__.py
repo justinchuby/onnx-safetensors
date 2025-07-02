@@ -18,4 +18,4 @@ from onnx_safetensors._safetensors_io import (
     save_file,
 )
 
-__version__ = "1.1.1"
+__version__ = "1.2.0"
