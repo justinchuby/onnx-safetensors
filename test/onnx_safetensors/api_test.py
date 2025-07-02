@@ -11,7 +11,7 @@ import onnx.helper
 import onnx.numpy_helper
 import parameterized
 import safetensors.numpy
-from onnxscript import ir
+import onnx_ir as ir
 
 import onnx_safetensors
 

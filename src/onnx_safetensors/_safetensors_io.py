@@ -12,8 +12,8 @@ from typing import TYPE_CHECKING, Any, TypeVar
 
 import onnx
 import onnx.helper
+import onnx_ir as ir
 import safetensors
-from onnxscript import ir
 
 from onnx_safetensors import _tensors
 
