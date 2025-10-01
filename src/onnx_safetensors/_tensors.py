@@ -5,7 +5,7 @@ import math
 from typing import Any
 
 import numpy as np
-from onnxscript import ir
+import onnx_ir as ir
 
 from onnx_safetensors import _metadata, _type_casting
 

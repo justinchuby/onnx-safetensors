@@ -8,6 +8,12 @@
 
 ONNX extension for saving to and loading from safetensors 🤗.
 
+## Features
+
+- ✅ Load and save ONNX weights from and to safetensors
+- ✅ Support all ONNX data types, including float8, float4 and 4-bit ints
+- ✅ Allow ONNX backends (including ONNX Runtime) to use safetensors
+
 ## Install
 
 ```sh
@@ -68,3 +74,7 @@ model_with_external_data = onnx_safetensors.save_file(model, data_path, base_dir
 # This model is a valid ONNX model using external data from the safetensors file
 onnx.save(model_with_external_data, os.path.join(base_dir, "model_using_safetensors.onnx"))
 ```
+
+## Examples
+
+- [Tutorial notebook](examples/tutorial.ipynb)
