@@ -105,7 +105,11 @@ def apply_tensors(
         if model_tensor is not None and apply_safetensors:
             assert isinstance(tensor, ir.ExternalTensor)
             _check_tensors_match(model_tensor, tensor, cast=cast)
-            if model_tensor.dtype != tensor.dtype:
+            if (
+                model_tensor.dtype != tensor.dtype
+                and not _is_4bit(model_tensor.dtype)
+                and not _is_8bit_float(model_tensor.dtype)
+            ):
                 if model_tensor.dtype not in _CASTABLE_DTYPES:
                     raise ValueError(
                         f"Cannot cast tensor '{name}' from dtype {tensor.dtype} to {model_tensor.dtype}."
