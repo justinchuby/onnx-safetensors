@@ -61,20 +61,22 @@ _IR_DTYPE_TO_SAFETENSORS_DTYPE = {
     ir.DataType.UINT32: "uint32",
     ir.DataType.UINT64: "uint64",
 }
-_CASTABLE_DTYPES = frozenset({
-    ir.DataType.BFLOAT16,
-    ir.DataType.FLOAT16,
-    ir.DataType.FLOAT,
-    ir.DataType.DOUBLE,
-    ir.DataType.INT8,
-    ir.DataType.INT16,
-    ir.DataType.INT32,
-    ir.DataType.INT64,
-    ir.DataType.UINT8,
-    ir.DataType.UINT16,
-    ir.DataType.UINT32,
-    ir.DataType.UINT64,
-})
+_CASTABLE_DTYPES = frozenset(
+    {
+        ir.DataType.BFLOAT16,
+        ir.DataType.FLOAT16,
+        ir.DataType.FLOAT,
+        ir.DataType.DOUBLE,
+        ir.DataType.INT8,
+        ir.DataType.INT16,
+        ir.DataType.INT32,
+        ir.DataType.INT64,
+        ir.DataType.UINT8,
+        ir.DataType.UINT16,
+        ir.DataType.UINT32,
+        ir.DataType.UINT64,
+    }
+)
 
 
 TModel = TypeVar("TModel", onnx.ModelProto, ir.Model)
@@ -109,7 +111,9 @@ def apply_tensors(
                         f"Cannot cast tensor '{name}' from dtype {tensor.dtype} to {model_tensor.dtype}."
                     )
                 updated_tensor = ir.LazyTensor(
-                    lambda: ir.Tensor(tensor.numpy().astype(model_tensor.dtype.numpy())),
+                    lambda tensor=tensor, model_tensor=model_tensor: ir.Tensor(
+                        tensor.numpy().astype(model_tensor.dtype.numpy())
+                    ),
                     dtype=model_tensor.dtype,
                     shape=model_tensor.shape,
                     name=model_tensor.name,
@@ -139,7 +143,11 @@ def _is_8bit_float(dtype: ir.DataType) -> bool:
 
 
 def replace_tensors(
-    model: ir.Model, /, location: str | os.PathLike, base_dir: str | os.PathLike, cast: bool = False
+    model: ir.Model,
+    /,
+    location: str | os.PathLike,
+    base_dir: str | os.PathLike,
+    cast: bool = False,
 ) -> None:
     """Replace all tensors in an ONNX model with external data from a safetensors file.
 
