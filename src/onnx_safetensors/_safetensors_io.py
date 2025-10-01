@@ -11,7 +11,6 @@ from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, TypeVar
 
 import onnx
-import onnx.helper
 import onnx_ir as ir
 import safetensors
 
@@ -344,6 +343,8 @@ def _read_safetensors(
         header, header_size = _read_safetensors_header(file)
     tensors = {}
     for name, metadata in header.items():
+        if name == "__metadata__":
+            continue
         offset = metadata["data_offsets"][0] + header_size + _HEADER_SIZE_NUMBER_SIZE
         length = metadata["data_offsets"][1] - metadata["data_offsets"][0]
         tensors[name] = ir.ExternalTensor(
