@@ -61,15 +61,31 @@ _IR_DTYPE_TO_SAFETENSORS_DTYPE = {
     ir.DataType.UINT32: "uint32",
     ir.DataType.UINT64: "uint64",
 }
+_CASTABLE_DTYPES = frozenset({
+    ir.DataType.BFLOAT16,
+    ir.DataType.FLOAT16,
+    ir.DataType.FLOAT,
+    ir.DataType.DOUBLE,
+    ir.DataType.INT8,
+    ir.DataType.INT16,
+    ir.DataType.INT32,
+    ir.DataType.INT64,
+    ir.DataType.UINT8,
+    ir.DataType.UINT16,
+    ir.DataType.UINT32,
+    ir.DataType.UINT64,
+})
 
 
 TModel = TypeVar("TModel", onnx.ModelProto, ir.Model)
 
 
-def _apply_tensors(
+def apply_tensors(
     model: ir.Model,
     tensors: Mapping[str, ir.TensorProtocol],
-    apply_safetensors: bool = False,
+    *,
+    apply_safetensors: bool = True,
+    cast: bool = False,
 ):
     """Apply tensors to an ONNX model.
 
@@ -77,6 +93,7 @@ def _apply_tensors(
         model: ONNX model to apply tensors to.
         tensors: Tensors to apply to the ONNX model.
         apply_safetensors: Whether it is applying safetensors to the ONNX model.
+        cast: Whether to cast the tensors to the dtype in the model if they differ.
     """
     graph = model.graph
     for name, tensor in tensors.items():
@@ -85,8 +102,20 @@ def _apply_tensors(
         model_tensor = graph.initializers[name].const_value
         if model_tensor is not None and apply_safetensors:
             assert isinstance(tensor, ir.ExternalTensor)
-            _check_tensors_match(model_tensor, tensor)
-            updated_tensor = _migrate_tensor_shape_dtype(model_tensor, tensor)
+            _check_tensors_match(model_tensor, tensor, cast=cast)
+            if model_tensor.dtype != tensor.dtype:
+                if model_tensor.dtype not in _CASTABLE_DTYPES:
+                    raise ValueError(
+                        f"Cannot cast tensor '{name}' from dtype {tensor.dtype} to {model_tensor.dtype}."
+                    )
+                updated_tensor = ir.LazyTensor(
+                    lambda: ir.Tensor(tensor.numpy().astype(model_tensor.dtype.numpy())),
+                    dtype=model_tensor.dtype,
+                    shape=model_tensor.shape,
+                    name=model_tensor.name,
+                )
+            else:
+                updated_tensor = _migrate_tensor_shape_dtype(model_tensor, tensor)
         else:
             updated_tensor = tensor
         graph.initializers[name].const_value = updated_tensor
@@ -124,7 +153,7 @@ def replace_tensors(
         Added the function.
     """
     tensors = read_safetensors(location, base_dir=base_dir)
-    _apply_tensors(model, tensors, apply_safetensors=True, cast=cast)
+    apply_tensors(model, tensors, apply_safetensors=True, cast=cast)
 
 
 def load_file(model: TModel, /, tensor_file: str | os.PathLike) -> TModel:
@@ -176,7 +205,7 @@ def load(model: TModel, /, data: bytes) -> TModel:
         )
         for (name, metadata) in tensors
     }
-    _apply_tensors(model_ir, tensors_dict)
+    apply_tensors(model_ir, tensors_dict, apply_safetensors=False)
 
     if isinstance(model, onnx.ModelProto):
         return ir.serde.serialize_model(model_ir)
@@ -330,7 +359,7 @@ def _read_safetensors_header(file: io.IOBase) -> tuple[dict[str, dict[str, Any]]
 def read_safetensors(
     location: str | os.PathLike, base_dir: str | os.PathLike
 ) -> dict[str, ir.ExternalTensor]:
-    """Read a safetensors file.
+    """Read a safetensors file and return a mapping of tensor names to ExternalTensors.
 
     Args:
         location: The safetensors file to read.
@@ -361,13 +390,14 @@ def read_safetensors(
 
 
 def _check_tensors_match(
-    model_tensor: ir.TensorProtocol, safe_tensor: ir.ExternalTensor
+    model_tensor: ir.TensorProtocol, safe_tensor: ir.ExternalTensor, cast: bool = False
 ):
     """Check if two tensors match.
 
     Args:
         model_tensor: Tensor from the model.
         safe_tensor: Tensor from the safetensors file.
+        cast: Whether to allow casting of the tensor from safetensors to match the model tensor.
 
     Raises:
         ValueError: If the tensors do not match.
@@ -394,7 +424,7 @@ def _check_tensors_match(
                 f"The tensor from safetensors has dtype: {safe_tensor.dtype}, but it must be UINT8 to "
                 f"represent the dtype of the tensor in the model: {model_tensor.dtype}."
             )
-    elif model_tensor.dtype != safe_tensor.dtype:
+    elif model_tensor.dtype != safe_tensor.dtype and not cast:
         raise ValueError(
             f"The tensor '{model_tensor.name}' from safetensors has dtype: {safe_tensor.dtype}, "
             f"which does not match the dtype of the tensor in the model: {model_tensor.dtype}."
@@ -408,8 +438,8 @@ def _check_tensors_match(
 
 
 def _migrate_tensor_shape_dtype(
-    model_tensor: ir.TensorProtocol, safe_tensor: ir.ExternalTensor
-) -> ir.ExternalTensor:
+    model_tensor: ir.TensorProtocol, safe_tensor: ir.TensorProtocol
+) -> ir.TensorProtocol:
     """Migrate the shape and dtype of a tensor.
 
     Args:
@@ -425,6 +455,7 @@ def _migrate_tensor_shape_dtype(
         ir.DataType.FLOAT8E4M3FNUZ,
         ir.DataType.FLOAT8E5M2FNUZ,
     } or _is_4bit(model_tensor.dtype):
+        assert isinstance(safe_tensor, ir.ExternalTensor)
         return ir.ExternalTensor(
             location=safe_tensor.location,
             offset=safe_tensor.offset,
