@@ -11,7 +11,6 @@ from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, TypeVar
 
 import onnx
-import onnx.helper
 import safetensors
 from onnxscript import ir
 
@@ -111,7 +110,7 @@ def _is_8bit_float(dtype: ir.DataType) -> bool:
 
 
 def replace_tensors(
-    model: ir.Model, /, location: str | os.PathLike, base_dir: str | os.PathLike
+    model: ir.Model, /, location: str | os.PathLike, base_dir: str | os.PathLike, cast: bool = False
 ) -> None:
     """Replace all tensors in an ONNX model with external data from a safetensors file.
 
@@ -119,12 +118,13 @@ def replace_tensors(
         model: ONNX model to replace tensors in.
         location: Path to the safetensors file relative to the ONNX model file.
         base_dir: Directory where the ONNX model file is stored.
+        cast: Whether to cast the tensors to the dtype in the model if they differ.
 
     .. versionadded:: 1.0
         Added the function.
     """
-    tensors = _read_safetensors(location, base_dir=base_dir)
-    _apply_tensors(model, tensors, apply_safetensors=True)
+    tensors = read_safetensors(location, base_dir=base_dir)
+    _apply_tensors(model, tensors, apply_safetensors=True, cast=cast)
 
 
 def load_file(model: TModel, /, tensor_file: str | os.PathLike) -> TModel:
@@ -327,7 +327,7 @@ def _read_safetensors_header(file: io.IOBase) -> tuple[dict[str, dict[str, Any]]
     return json.loads(header.decode("utf-8")), header_size
 
 
-def _read_safetensors(
+def read_safetensors(
     location: str | os.PathLike, base_dir: str | os.PathLike
 ) -> dict[str, ir.ExternalTensor]:
     """Read a safetensors file.
@@ -344,6 +344,8 @@ def _read_safetensors(
         header, header_size = _read_safetensors_header(file)
     tensors = {}
     for name, metadata in header.items():
+        if name == "__metadata__":
+            continue
         offset = metadata["data_offsets"][0] + header_size + _HEADER_SIZE_NUMBER_SIZE
         length = metadata["data_offsets"][1] - metadata["data_offsets"][0]
         tensors[name] = ir.ExternalTensor(
@@ -394,7 +396,7 @@ def _check_tensors_match(
             )
     elif model_tensor.dtype != safe_tensor.dtype:
         raise ValueError(
-            f"The tensor from safetensors has dtype: {safe_tensor.dtype}, "
+            f"The tensor '{model_tensor.name}' from safetensors has dtype: {safe_tensor.dtype}, "
             f"which does not match the dtype of the tensor in the model: {model_tensor.dtype}."
         )
 
