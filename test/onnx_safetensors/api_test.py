@@ -100,7 +100,7 @@ def _create_runnable_test_model() -> onnx.ModelProto:
     )
 
     model = onnx.helper.make_model(
-        graph, opset_imports=[onnx.helper.make_opsetid("", 20)], ir_version=11
+        graph, opset_imports=[onnx.helper.make_opsetid("", 20)], ir_version=10
     )
     return model
 
@@ -315,7 +315,7 @@ class PublicApiTest(unittest.TestCase):
             ],
         )
         model = onnx.helper.make_model(
-            graph, opset_imports=[onnx.helper.make_opsetid("", 20)], ir_version=11
+            graph, opset_imports=[onnx.helper.make_opsetid("", 20)], ir_version=10
         )
 
         model_path = pathlib.Path(self.temp_dir.name) / "sharded_runnable.onnx"
@@ -411,7 +411,7 @@ def _create_test_ir_model(dtype: ir.DataType) -> ir.Model:
             initializers=(input_,),
             opset_imports={"": 20},
         ),
-        ir_version=11,
+        ir_version=10,
     )
 
     return model
@@ -755,7 +755,7 @@ class PublicIrApiTest(unittest.TestCase):
                 initializers=(weights1_val, weights2_val),
                 opset_imports={"": 20},
             ),
-            ir_version=11,
+            ir_version=10,
         )
 
         model_path = pathlib.Path(self.temp_dir.name) / "ir_sharded.onnx"
