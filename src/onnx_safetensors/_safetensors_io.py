@@ -456,9 +456,14 @@ def save_file(  # noqa: PLR0912, PLR0915
 
             # Save index file if sharding occurred
             if total_shards > 1:
-                index_filename = str(location).replace(
-                    ".safetensors", ".safetensors.index.json"
-                )
+                location_str = str(location)
+                if location_str.endswith(".safetensors"):
+                    index_filename = (
+                        location_str.rsplit(".safetensors", 1)[0]
+                        + ".safetensors.index.json"
+                    )
+                else:
+                    index_filename = location_str + ".index.json"
                 index_path = os.path.join(base_dir, index_filename)
                 index_data = {
                     "metadata": {"total_size": total_size},
