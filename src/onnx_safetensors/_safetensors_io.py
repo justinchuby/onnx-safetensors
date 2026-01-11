@@ -477,8 +477,9 @@ def save_file(  # noqa: PLR0912
 def save_model(
     model: TModel,
     model_path: str | os.PathLike,
-    external_data: str | os.PathLike,
+    /,
     *,
+    external_data: str | os.PathLike | None = None,
     size_threshold: int = 0,
     max_shard_size: int | str | None = None,
 ) -> None:
@@ -488,7 +489,8 @@ def save_model(
         model: ONNX model to save.
         model_path: Path to the ONNX model file. E.g. "model.onnx".
         external_data: Path to the safetensors file relative to the ONNX model file.
-            E.g. "model.safetensors".
+            E.g. "model.safetensors". If not provided, it will be derived from
+            the model_path by replacing the extension with ".safetensors".
         size_threshold: Minimum size in bytes for a tensor to be saved.
             Default is 0, which saves all tensors.
         max_shard_size: Maximum size in bytes for a checkpoint before being sharded.
@@ -501,9 +503,17 @@ def save_model(
 
     .. versionadded:: 1.3.0
         Added the function.
-    .. versionadded:: 1.3.0
-        The *max_shard_size* parameter was added to support sharding large models.
     """
+    # Derive external_data from model_path if not provided
+    if external_data is None:
+        model_path_str = str(model_path)
+        # Get the base name without extension
+        if "." in os.path.basename(model_path_str):
+            base_name = os.path.splitext(os.path.basename(model_path_str))[0]
+        else:
+            base_name = os.path.basename(model_path_str)
+        external_data = f"{base_name}.safetensors"
+
     # Ensure that external_data ends with .safetensors
     if not str(external_data).endswith(".safetensors"):
         raise ValueError(
