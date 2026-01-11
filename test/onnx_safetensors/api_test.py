@@ -116,7 +116,9 @@ class PublicApiTest(unittest.TestCase):
         model_path = pathlib.Path(self.temp_dir.name) / "model.onnx"
         external_data_path = "weights.safetensors"
 
-        onnx_safetensors.save_model(self.model, model_path, external_data_path)
+        onnx_safetensors.save_model(
+            self.model, model_path, external_data=external_data_path
+        )
 
         # Verify both files were created
         self.assertTrue(model_path.exists())
@@ -135,13 +137,87 @@ class PublicApiTest(unittest.TestCase):
         for key in tensors:
             np.testing.assert_array_equal(tensors[key], self.model_tensor_dict[key])
 
+    def test_save_model_without_external_data_argument(self) -> None:
+        model_path = pathlib.Path(self.temp_dir.name) / "model.onnx"
+
+        # Call save_model without providing external_data
+        onnx_safetensors.save_model(self.model, model_path)
+
+        # Verify both files were created with auto-derived names
+        self.assertTrue(model_path.exists())
+        # Should auto-create model.safetensors
+        expected_safetensors = pathlib.Path(self.temp_dir.name) / "model.safetensors"
+        self.assertTrue(expected_safetensors.exists())
+
+        # Verify safetensors file contains the correct tensors
+        tensors = safetensors.numpy.load_file(expected_safetensors)
+        for key in tensors:
+            np.testing.assert_array_equal(tensors[key], self.model_tensor_dict[key])
+
+    def test_save_model_without_external_data_with_sharding(self) -> None:
+        # Create a model with multiple tensors to test sharding
+        tensor1 = np.arange(1000).reshape(100, 10).astype(np.float32)
+        tensor2 = np.arange(2000).reshape(200, 10).astype(np.float32)
+        tensor3 = np.arange(500).reshape(50, 10).astype(np.float32)
+
+        initializers = [
+            onnx.numpy_helper.from_array(tensor1, name="tensor1"),
+            onnx.numpy_helper.from_array(tensor2, name="tensor2"),
+            onnx.numpy_helper.from_array(tensor3, name="tensor3"),
+        ]
+
+        graph = onnx.helper.make_graph(
+            [],
+            "test_graph",
+            inputs=[],
+            outputs=[],
+            initializer=initializers,
+        )
+        model = onnx.helper.make_model(graph)
+
+        model_path = pathlib.Path(self.temp_dir.name) / "mymodel.onnx"
+
+        # Call save_model without providing external_data, but with max_shard_size
+        onnx_safetensors.save_model(model, model_path, max_shard_size="5KB")
+
+        # Verify model file was created
+        self.assertTrue(model_path.exists())
+
+        # Check that shard files were created with auto-derived base name
+        shard_files = list(
+            pathlib.Path(self.temp_dir.name).glob("mymodel-*.safetensors")
+        )
+        self.assertGreater(
+            len(shard_files), 1, "Expected multiple shard files to be created"
+        )
+
+        # Check that index file was created with auto-derived name
+        index_file = pathlib.Path(self.temp_dir.name) / "mymodel.safetensors.index.json"
+        self.assertTrue(
+            index_file.exists(), "Index file should be created when sharding"
+        )
+
+        # Verify index file content
+        with open(index_file) as f:
+            index_data = json.load(f)
+
+        self.assertIn("weight_map", index_data)
+        self.assertIn("metadata", index_data)
+        self.assertEqual(
+            len(index_data["weight_map"]), 3, "Should have 3 tensors in weight map"
+        )
+
+        # Verify all tensors are accounted for
+        for tensor_name in ["tensor1", "tensor2", "tensor3"]:
+            self.assertIn(tensor_name, index_data["weight_map"])
+
     def test_save_model_requires_safetensors_extension(self) -> None:
         model_path = pathlib.Path(self.temp_dir.name) / "model.onnx"
         invalid_external_data_path = "weights.bin"
 
         with self.assertRaises(ValueError) as context:
             onnx_safetensors.save_model(
-                self.model, model_path, invalid_external_data_path
+                self.model, model_path, external_data=invalid_external_data_path
             )
 
         self.assertIn(".safetensors", str(context.exception))
@@ -152,7 +228,10 @@ class PublicApiTest(unittest.TestCase):
 
         # Use a high threshold to exclude all tensors
         onnx_safetensors.save_model(
-            self.model, model_path, external_data_path, size_threshold=1000
+            self.model,
+            model_path,
+            external_data=external_data_path,
+            size_threshold=1000,
         )
 
         # Verify model file was created
@@ -170,7 +249,9 @@ class PublicApiTest(unittest.TestCase):
         model_path = pathlib.Path(self.temp_dir.name) / "model.onnx"
         external_data_path = "weights.safetensors"
 
-        onnx_safetensors.save_model(self.model, model_path, external_data_path)
+        onnx_safetensors.save_model(
+            self.model, model_path, external_data=external_data_path
+        )
 
         # Load the model and check that external data references are relative
         loaded_model = onnx.load(model_path)
@@ -309,7 +390,7 @@ class PublicIrApiTest(unittest.TestCase):
         model_path = pathlib.Path(self.temp_dir.name) / "model.onnx"
         external_data_path = "weights.safetensors"
 
-        onnx_safetensors.save_model(model, model_path, external_data_path)
+        onnx_safetensors.save_model(model, model_path, external_data=external_data_path)
 
         # Verify both files were created
         self.assertTrue(model_path.exists())
@@ -333,7 +414,9 @@ class PublicIrApiTest(unittest.TestCase):
         invalid_external_data_path = "weights.bin"
 
         with self.assertRaises(ValueError) as context:
-            onnx_safetensors.save_model(model, model_path, invalid_external_data_path)
+            onnx_safetensors.save_model(
+                model, model_path, external_data=invalid_external_data_path
+            )
 
         self.assertIn(".safetensors", str(context.exception))
 
@@ -344,7 +427,7 @@ class PublicIrApiTest(unittest.TestCase):
 
         # Use a high threshold to exclude all tensors
         onnx_safetensors.save_model(
-            model, model_path, external_data_path, size_threshold=1000
+            model, model_path, external_data=external_data_path, size_threshold=1000
         )
 
         # Verify model file was created
@@ -458,7 +541,7 @@ class PublicIrApiTest(unittest.TestCase):
 
         # Save with small shard size
         onnx_safetensors.save_model(
-            model, model_path, external_data_path, max_shard_size="5KB"
+            model, model_path, external_data=external_data_path, max_shard_size="5KB"
         )
 
         # Verify model file was created
