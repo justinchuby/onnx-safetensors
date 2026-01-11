@@ -423,17 +423,25 @@ def save_file(  # noqa: PLR0912
 
         if tensor_metadata:
             # Determine sharding based on metadata only
-            shard_tensor_names, weight_map = _shard_tensors(tensor_metadata, max_shard_size)
+            shard_tensor_names, weight_map = _shard_tensors(
+                tensor_metadata, max_shard_size
+            )
             total_shards = len(shard_tensor_names)
 
             # Save each shard, loading only necessary tensor data
             all_shards = []
-            for shard_idx, tensor_names in tqdm(
-                enumerate(shard_tensor_names, start=1),
-                total=total_shards,
-                desc="Saving shards",
-                disable=total_shards == 1,
+            for shard_idx, tensor_names in (
+                pbar := tqdm(
+                    enumerate(shard_tensor_names, start=1),
+                    total=total_shards,
+                    disable=total_shards == 1,
+                )
             ):
+                shard_filename = _get_shard_filename(
+                    str(location), shard_idx, total_shards
+                )
+                pbar.set_description(f"Saving {shard_filename}")
+
                 # Build tensor_dict for this shard only
                 shard_dict = {}
                 for tensor_name in tensor_names:
@@ -444,7 +452,6 @@ def save_file(  # noqa: PLR0912
                         "data": tensor.tobytes(),
                     }
 
-                shard_filename = _get_shard_filename(str(location), shard_idx, total_shards)
                 shard_path = os.path.join(base_dir, shard_filename)
                 all_shards.append(shard_path)
                 safetensors.serialize_file(shard_dict, shard_path)
