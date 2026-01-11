@@ -256,12 +256,14 @@ class PublicApiTest(unittest.TestCase):
         # Load the model and check that external data references are relative
         loaded_model = onnx.load(model_path)
         for initializer in loaded_model.graph.initializer:
-            if initializer.HasField("data_location"):
-                if initializer.data_location == onnx.TensorProto.EXTERNAL:
-                    for entry in initializer.external_data:
-                        if entry.key == "location":
-                            # The location should be just the filename, not an absolute path
-                            self.assertEqual(entry.value, external_data_path)
+            if not initializer.HasField("data_location"):
+                continue
+            if initializer.data_location != onnx.TensorProto.EXTERNAL:
+                continue
+            for entry in initializer.external_data:
+                if entry.key == "location":
+                    # The location should be just the filename, not an absolute path
+                    self.assertEqual(entry.value, external_data_path)
 
 
 def _create_test_ir_model(dtype: ir.DataType) -> ir.Model:
