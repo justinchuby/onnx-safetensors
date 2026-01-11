@@ -444,7 +444,7 @@ def save_file(  # noqa: PLR0912, PLR0915
                     }
 
                 shard_path = os.path.join(base_dir, shard_filename)
-                all_shards.append(shard_path)
+                all_shards.append(shard_filename)
                 safetensors.serialize_file(shard_dict, shard_path)
 
                 # Update weight_map with shard filename

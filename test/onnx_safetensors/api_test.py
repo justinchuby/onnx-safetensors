@@ -10,6 +10,7 @@ import numpy as np
 import onnx
 import onnx.helper
 import onnx.numpy_helper
+import onnxruntime as ort
 import parameterized
 import safetensors.numpy
 import onnx_ir as ir
@@ -75,6 +76,35 @@ def _get_model_tensor_dict() -> dict[str, np.ndarray]:
     }
 
 
+def _create_runnable_test_model() -> onnx.ModelProto:
+    """Create a simple runnable ONNX model for testing with ORT."""
+    # Create a simple model: output = input + weights
+    # Input shape: (2, 3)
+    # Weights shape: (2, 3)
+    weights = np.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]], dtype=np.float32)
+
+    graph = onnx.helper.make_graph(
+        [
+            onnx.helper.make_node("Add", ["input", "weights"], ["output"]),
+        ],
+        "runnable_test",
+        inputs=[
+            onnx.helper.make_tensor_value_info("input", onnx.TensorProto.FLOAT, [2, 3]),
+        ],
+        outputs=[
+            onnx.helper.make_tensor_value_info(
+                "output", onnx.TensorProto.FLOAT, [2, 3]
+            ),
+        ],
+        initializer=[onnx.numpy_helper.from_array(weights, name="weights")],
+    )
+
+    model = onnx.helper.make_model(
+        graph, opset_imports=[onnx.helper.make_opsetid("", 20)], ir_version=12
+    )
+    return model
+
+
 class PublicApiTest(unittest.TestCase):
     def setUp(self) -> None:
         self.model = _create_test_model()
@@ -85,6 +115,29 @@ class PublicApiTest(unittest.TestCase):
 
     def tearDown(self) -> None:
         self.temp_dir.cleanup()
+
+    def assert_ort(
+        self,
+        model_path: pathlib.Path,
+        inputs: dict[str, np.ndarray],
+        expected: dict[str, np.ndarray],
+    ) -> None:
+        """Assert that a model can be run with onnxruntime and produces expected outputs.
+
+        Args:
+            model_path: Path to the ONNX model file.
+            inputs: Dictionary of input names to numpy arrays.
+            expected: Dictionary of output names to expected numpy arrays.
+        """
+        sess = ort.InferenceSession(str(model_path), providers=["CPUExecutionProvider"])
+        outputs = sess.run(None, inputs)
+        output_names = [o.name for o in sess.get_outputs()]
+
+        for i, name in enumerate(output_names):
+            if name in expected:
+                np.testing.assert_allclose(
+                    outputs[i], expected[name], rtol=1e-5, atol=1e-5
+                )
 
     def test_load_file_to_model(self) -> None:
         safetensors.numpy.save_file(self.replacement_tensor_dict, self.tensor_file_path)
@@ -154,6 +207,26 @@ class PublicApiTest(unittest.TestCase):
         for key in tensors:
             np.testing.assert_array_equal(tensors[key], self.model_tensor_dict[key])
 
+    def test_save_model_can_run_with_ort(self) -> None:
+        """Test that saved models can be executed with ONNX Runtime."""
+        model = _create_runnable_test_model()
+        model_path = pathlib.Path(self.temp_dir.name) / "runnable.onnx"
+
+        onnx_safetensors.save_model(model, model_path)
+
+        # Verify the saved model can run
+        input_data = np.array(
+            [[10.0, 20.0, 30.0], [40.0, 50.0, 60.0]], dtype=np.float32
+        )
+        weights = np.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]], dtype=np.float32)
+        expected_output = input_data + weights
+
+        self.assert_ort(
+            model_path,
+            {"input": input_data},
+            {"output": expected_output},
+        )
+
     def test_save_model_without_external_data_with_sharding(self) -> None:
         # Create a model with multiple tensors to test sharding
         tensor1 = np.arange(1000).reshape(100, 10).astype(np.float32)
@@ -210,6 +283,63 @@ class PublicApiTest(unittest.TestCase):
         # Verify all tensors are accounted for
         for tensor_name in ["tensor1", "tensor2", "tensor3"]:
             self.assertIn(tensor_name, index_data["weight_map"])
+
+    def test_save_model_with_sharding_can_run_with_ort(self) -> None:
+        """Test that sharded models can be executed with ONNX Runtime."""
+        # Create a runnable model with larger weights to force sharding
+        # Use compatible shapes: (1, 2000) and (1, 4000)
+        weights1 = np.arange(2000).astype(np.float32).reshape(1, 2000)
+        weights2 = np.arange(4000).astype(np.float32).reshape(1, 4000)
+
+        # Create a model: add weights1, concat to expand, then add weights2
+        graph = onnx.helper.make_graph(
+            [
+                onnx.helper.make_node("Add", ["input", "weights1"], ["temp"]),
+                onnx.helper.make_node("Concat", ["temp", "temp"], ["expanded"], axis=1),
+                onnx.helper.make_node("Add", ["expanded", "weights2"], ["output"]),
+            ],
+            "sharded_runnable",
+            inputs=[
+                onnx.helper.make_tensor_value_info(
+                    "input", onnx.TensorProto.FLOAT, [1, 2000]
+                ),
+            ],
+            outputs=[
+                onnx.helper.make_tensor_value_info(
+                    "output", onnx.TensorProto.FLOAT, [1, 4000]
+                ),
+            ],
+            initializer=[
+                onnx.numpy_helper.from_array(weights1, name="weights1"),
+                onnx.numpy_helper.from_array(weights2, name="weights2"),
+            ],
+        )
+        model = onnx.helper.make_model(
+            graph, opset_imports=[onnx.helper.make_opsetid("", 20)], ir_version=12
+        )
+
+        model_path = pathlib.Path(self.temp_dir.name) / "sharded_runnable.onnx"
+
+        # Save with small shard size to force sharding
+        onnx_safetensors.save_model(model, model_path, max_shard_size="10KB")
+
+        # Verify sharding occurred
+        shard_files = list(
+            pathlib.Path(self.temp_dir.name).glob("sharded_runnable-*.safetensors")
+        )
+        self.assertGreater(len(shard_files), 1, "Expected sharding to occur")
+
+        # Verify the saved model can still run
+        input_data = np.ones((1, 2000), dtype=np.float32)
+        temp_result = input_data + weights1
+        expanded = np.concatenate([temp_result, temp_result], axis=1)
+        expected_output = expanded + weights2
+
+        self.assert_ort(
+            model_path,
+            {"input": input_data},
+            {"output": expected_output},
+        )
 
     def test_save_model_requires_safetensors_extension(self) -> None:
         model_path = pathlib.Path(self.temp_dir.name) / "model.onnx"
@@ -281,7 +411,7 @@ def _create_test_ir_model(dtype: ir.DataType) -> ir.Model:
             initializers=(input_,),
             opset_imports={"": 20},
         ),
-        ir_version=10,
+        ir_version=12,
     )
 
     return model
@@ -296,6 +426,29 @@ class PublicIrApiTest(unittest.TestCase):
 
     def tearDown(self) -> None:
         self.temp_dir.cleanup()
+
+    def assert_ort(
+        self,
+        model_path: pathlib.Path,
+        inputs: dict[str, np.ndarray],
+        expected: dict[str, np.ndarray],
+    ) -> None:
+        """Assert that a model can be run with onnxruntime and produces expected outputs.
+
+        Args:
+            model_path: Path to the ONNX model file.
+            inputs: Dictionary of input names to numpy arrays.
+            expected: Dictionary of output names to expected numpy arrays.
+        """
+        sess = ort.InferenceSession(str(model_path), providers=["CPUExecutionProvider"])
+        outputs = sess.run(None, inputs)
+        output_names = [o.name for o in sess.get_outputs()]
+
+        for i, name in enumerate(output_names):
+            if name in expected:
+                np.testing.assert_allclose(
+                    outputs[i], expected[name], rtol=1e-5, atol=1e-5
+                )
 
     def test_load_file_to_ir_model(self) -> None:
         safetensors.numpy.save_file(self.replacement_tensor_dict, self.tensor_file_path)
@@ -370,8 +523,7 @@ class PublicIrApiTest(unittest.TestCase):
             # (ir.DataType.COMPLEX128.name, ir.DataType.COMPLEX128) ,
             (ir.DataType.BFLOAT16.name, ir.DataType.BFLOAT16),
             (ir.DataType.FLOAT8E4M3FN.name, ir.DataType.FLOAT8E4M3FN),
-            # (ir.DataType.FLOAT8E4M3FNUZ.name, ir.DataType.FLOAT8E4M3FNUZ),
-            # TODO: FLOAT8E4M3FNUZ support in ONNX IR was fixed in 0.3. Enable when it is released
+            (ir.DataType.FLOAT8E4M3FNUZ.name, ir.DataType.FLOAT8E4M3FNUZ),
             (ir.DataType.FLOAT8E5M2.name, ir.DataType.FLOAT8E5M2),
             (ir.DataType.FLOAT8E5M2FNUZ.name, ir.DataType.FLOAT8E5M2FNUZ),
             (ir.DataType.UINT4.name, ir.DataType.UINT4),
@@ -558,6 +710,76 @@ class PublicIrApiTest(unittest.TestCase):
         # Check that index file was created
         index_file = pathlib.Path(self.temp_dir.name) / "weights.safetensors.index.json"
         self.assertTrue(index_file.exists())
+
+    def test_save_model_with_sharding_from_ir_can_run_with_ort(self) -> None:
+        """Test that sharded IR models can be executed with ONNX Runtime."""
+        # Create a runnable IR model with larger weights to force sharding
+        # Using shape (1, 2000) to force sharding while keeping compatible shapes
+        weights1 = np.arange(2000).astype(np.float32).reshape(1, 2000)
+        weights2 = np.arange(4000).astype(np.float32).reshape(1, 4000)
+
+        # Build graph using IR
+        input_val = ir.val(
+            name="input",
+            type=ir.TensorType(ir.DataType.FLOAT),
+            shape=ir.Shape([1, 2000]),
+        )
+        weights1_val = ir.val(
+            name="weights1",
+            type=ir.TensorType(ir.DataType.FLOAT),
+            shape=ir.Shape([1, 2000]),
+        )
+        weights1_val.const_value = ir.tensor(weights1, name="weights1")
+        weights2_val = ir.val(
+            name="weights2",
+            type=ir.TensorType(ir.DataType.FLOAT),
+            shape=ir.Shape([1, 4000]),
+        )
+        weights2_val.const_value = ir.tensor(weights2, name="weights2")
+
+        add1 = ir.Node("", "Add", [input_val, weights1_val])
+        # Concatenate the result to make it (1, 4000) for the second add
+        concat = ir.Node(
+            "",
+            "Concat",
+            [add1.outputs[0], add1.outputs[0]],
+            attributes={"axis": ir.AttrInt64("axis", 1)},
+        )
+        add2 = ir.Node("", "Add", [concat.outputs[0], weights2_val])
+
+        model = ir.Model(
+            ir.Graph(
+                (input_val,),
+                add2.outputs,
+                nodes=(add1, concat, add2),
+                initializers=(weights1_val, weights2_val),
+                opset_imports={"": 20},
+            ),
+            ir_version=12,
+        )
+
+        model_path = pathlib.Path(self.temp_dir.name) / "ir_sharded.onnx"
+
+        # Save with small shard size to force sharding
+        onnx_safetensors.save_model(model, model_path, max_shard_size="10KB")
+
+        # Verify sharding occurred
+        shard_files = list(
+            pathlib.Path(self.temp_dir.name).glob("ir_sharded-*.safetensors")
+        )
+        self.assertGreater(len(shard_files), 1, "Expected sharding to occur")
+
+        # Verify the saved model can still run
+        input_data = np.ones((1, 2000), dtype=np.float32)
+        temp_result = input_data + weights1
+        concat_result = np.concatenate([temp_result, temp_result], axis=1)
+        expected_output = concat_result + weights2
+
+        self.assert_ort(
+            model_path,
+            {"input": input_data},
+            {"output": expected_output},
+        )
 
     def test_parse_size_string(self) -> None:
         # Test the size string parsing
