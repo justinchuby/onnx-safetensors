@@ -386,9 +386,9 @@ def save_file(  # noqa: PLR0912, PLR0915
             Default is 0, which saves all tensors.
         replace_data: Whether to replace the data in the ONNX model with
             the external data. Default is True.
-        max_shard_size: Maximum size for a checkpoint before being sharded.
-            If expressed as a string, needs to be digits followed by a unit
-            (like "5GB" or "100MB"). If None, no sharding is performed.
+        max_shard_size: Maximum size in bytes (as int) or as a string with unit
+            (like "5GB" or "100MB") for a checkpoint before being sharded.
+            If None, no sharding is performed.
 
     Returns:
         The ONNX model with the external data.
