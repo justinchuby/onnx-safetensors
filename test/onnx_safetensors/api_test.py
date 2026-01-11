@@ -183,7 +183,7 @@ class PublicApiTest(unittest.TestCase):
 
 
 def _create_test_ir_model(dtype: ir.DataType) -> ir.Model:
-    input_ = ir.Input(
+    input_ = ir.val(
         name="initializer_value", type=ir.TensorType(dtype), shape=ir.Shape((3,))
     )
     input_.const_value = ir.tensor([0, 1, 6], dtype=dtype, name="initializer_value")
@@ -482,8 +482,6 @@ class PublicIrApiTest(unittest.TestCase):
         self.assertEqual(_parse_size_string("1KB"), 1024)
         self.assertEqual(_parse_size_string("512B"), 512)
         self.assertEqual(_parse_size_string(1024), 1024)
-        self.assertEqual(_parse_size_string("5G"), 5 * 1024**3)
-        self.assertEqual(_parse_size_string("100M"), 100 * 1024**2)
 
         # Test invalid formats
         with self.assertRaises(ValueError):

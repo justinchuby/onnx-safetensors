@@ -386,9 +386,6 @@ def save_file(
     Returns:
         The ONNX model with the external data.
 
-    .. versionadded:: 1.0.1
-        The *base_dir* parameter was added so the external data can be referenced
-        relative to the ONNX model file correctly.
     .. versionadded:: 1.0
         The *replace_data* parameter was added to allow the user to choose
         whether to replace the data in the ONNX model with the external data.
@@ -396,6 +393,9 @@ def save_file(
         The *convert_attributes* and *strip_data* parameters were removed. Set
         *replace_data* to achieve similar effect as *strip_data*.
     .. versionchanged:: 1.0
+    .. versionadded:: 1.0.1
+        The *base_dir* parameter was added so the external data can be referenced
+        relative to the ONNX model file correctly.
         The return value is now the updated ONNX model instead of a set of saved tensor names.
     .. versionadded:: 1.3.0
         The *max_shard_size* parameter was added to support sharding large models.
@@ -425,9 +425,11 @@ def save_file(
         total_shards = len(shards)
 
         # Save each shard
+        all_shards = []
         for shard_idx, shard_dict in enumerate(shards, start=1):
             shard_filename = _get_shard_filename(str(location), shard_idx, total_shards)
             shard_path = os.path.join(base_dir, shard_filename)
+            all_shards.append(shard_path)
             safetensors.serialize_file(shard_dict, shard_path)
 
             # Update weight_map with shard filename
@@ -449,32 +451,13 @@ def save_file(
             with open(index_path, "w") as f:
                 json.dump(index_data, f, indent=2)
 
-        # For replace_data, we use the first shard or index file
+        # For replace_data, replace tensors from each shard
         if replace_data:
-            if total_shards == 1:
-                replace_tensors(
-                    model_ir, _get_shard_filename(str(location), 1, 1), base_dir
-                )
-            else:
-                # When sharded, we need to handle external data references differently
-                # For now, we'll point to individual shards based on the weight map
-                for name in weight_map:
-                    if name in model_ir.graph.initializers:
-                        shard_location = weight_map[name]
-                        # Create a minimal tensor dict for this specific tensor
-                        single_tensor_model = ir.serde.deserialize_model(
-                            ir.serde.serialize_model(model_ir)
-                        )
-                        replace_tensors(single_tensor_model, shard_location, base_dir)
-                        # Copy the external tensor reference
-                        if name in single_tensor_model.graph.initializers:
-                            model_ir.graph.initializers[
-                                name
-                            ].const_value = single_tensor_model.graph.initializers[
-                                name
-                            ].const_value
+            # When sharded, replace tensors from each shard file
+            for shard_path in all_shards:
+                replace_tensors(model_ir, shard_path, base_dir)
     else:
-        # No sharding - original behavior
+        # No sharding
         tensor_file = os.path.join(base_dir, location)
         safetensors.serialize_file(tensor_dict, tensor_file)
         if replace_data:
