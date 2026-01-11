@@ -361,7 +361,7 @@ class PublicApiTest(unittest.TestCase):
             self.model,
             model_path,
             external_data=external_data_path,
-            size_threshold=1000,
+            size_threshold=10000,
         )
 
         # Verify model file was created
@@ -581,7 +581,7 @@ class PublicIrApiTest(unittest.TestCase):
 
         # Use a high threshold to exclude all tensors
         onnx_safetensors.save_model(
-            model, model_path, external_data=external_data_path, size_threshold=1000
+            model, model_path, external_data=external_data_path, size_threshold=10000
         )
 
         # Verify model file was created
@@ -783,11 +783,11 @@ class PublicIrApiTest(unittest.TestCase):
 
     def test_parse_size_string(self) -> None:
         # Test the size string parsing
-        self.assertEqual(_parse_size_string("5GB"), 5 * 1024**3)
-        self.assertEqual(_parse_size_string("100MB"), 100 * 1024**2)
-        self.assertEqual(_parse_size_string("1KB"), 1024)
+        self.assertEqual(_parse_size_string("5GB"), 5 * 1000**3)
+        self.assertEqual(_parse_size_string("100MB"), 100 * 1000**2)
+        self.assertEqual(_parse_size_string("1KB"), 1000)
         self.assertEqual(_parse_size_string("512B"), 512)
-        self.assertEqual(_parse_size_string(1024), 1024)
+        self.assertEqual(_parse_size_string(1000), 1000)
 
         # Test invalid formats
         with self.assertRaises(ValueError):
