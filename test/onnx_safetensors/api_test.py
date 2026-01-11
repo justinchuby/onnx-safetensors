@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import pathlib
 import tempfile
 import unittest
@@ -118,7 +119,9 @@ class PublicApiTest(unittest.TestCase):
 
         # Verify both files were created
         self.assertTrue(model_path.exists())
-        self.assertTrue((pathlib.Path(self.temp_dir.name) / external_data_path).exists())
+        self.assertTrue(
+            (pathlib.Path(self.temp_dir.name) / external_data_path).exists()
+        )
 
         # Load and verify the saved model
         loaded_model = onnx.load(model_path)
@@ -136,7 +139,9 @@ class PublicApiTest(unittest.TestCase):
         invalid_external_data_path = "weights.bin"
 
         with self.assertRaises(ValueError) as context:
-            onnx_safetensors.save_model(self.model, model_path, invalid_external_data_path)
+            onnx_safetensors.save_model(
+                self.model, model_path, invalid_external_data_path
+            )
 
         self.assertIn(".safetensors", str(context.exception))
 
@@ -307,7 +312,9 @@ class PublicIrApiTest(unittest.TestCase):
 
         # Verify both files were created
         self.assertTrue(model_path.exists())
-        self.assertTrue((pathlib.Path(self.temp_dir.name) / external_data_path).exists())
+        self.assertTrue(
+            (pathlib.Path(self.temp_dir.name) / external_data_path).exists()
+        )
 
         # Load and verify the saved model
         loaded_model = onnx.load(model_path)
@@ -350,6 +357,156 @@ class PublicIrApiTest(unittest.TestCase):
         with open(safetensors_path, "rb") as f:
             tensors = safetensors.deserialize(f.read())
         self.assertEqual(len(tensors), 0)
+
+    def test_save_file_with_max_shard_size(self) -> None:
+        # Create a model with multiple tensors to test sharding
+        tensor1 = np.arange(1000).reshape(100, 10).astype(np.float32)
+        tensor2 = np.arange(2000).reshape(200, 10).astype(np.float32)
+        tensor3 = np.arange(500).reshape(50, 10).astype(np.float32)
+
+        initializers = [
+            onnx.numpy_helper.from_array(tensor1, name="tensor1"),
+            onnx.numpy_helper.from_array(tensor2, name="tensor2"),
+            onnx.numpy_helper.from_array(tensor3, name="tensor3"),
+        ]
+
+        graph = onnx.helper.make_graph(
+            [],
+            "test_graph",
+            inputs=[],
+            outputs=[],
+            initializer=initializers,
+        )
+        model = onnx.helper.make_model(graph)
+
+        # Save with small shard size to force sharding
+        tensor_file_path = pathlib.Path(self.temp_dir.name) / "weights.safetensors"
+        # Each tensor is ~4KB, so setting max_shard_size to 5KB should create multiple shards
+        onnx_safetensors.save_file(model, tensor_file_path, max_shard_size="5KB")
+
+        # Check that multiple shard files were created
+        shard_files = list(
+            pathlib.Path(self.temp_dir.name).glob("weights-*.safetensors")
+        )
+        self.assertGreater(
+            len(shard_files), 1, "Expected multiple shard files to be created"
+        )
+
+        # Check that index file was created
+        index_file = pathlib.Path(self.temp_dir.name) / "weights.safetensors.index.json"
+        self.assertTrue(
+            index_file.exists(), "Index file should be created when sharding"
+        )
+
+        # Verify index file content
+        with open(index_file) as f:
+            index_data = json.load(f)
+
+        self.assertIn("weight_map", index_data)
+        self.assertIn("metadata", index_data)
+        self.assertEqual(
+            len(index_data["weight_map"]), 3, "Should have 3 tensors in weight map"
+        )
+
+        # Verify all tensors are accounted for
+        for tensor_name in ["tensor1", "tensor2", "tensor3"]:
+            self.assertIn(tensor_name, index_data["weight_map"])
+
+    def test_save_file_with_max_shard_size_no_sharding_needed(self) -> None:
+        # Create a small model that doesn't need sharding
+        model = _create_test_model()
+        tensor_file_path = pathlib.Path(self.temp_dir.name) / "weights.safetensors"
+
+        # Save with large shard size - no sharding should occur
+        onnx_safetensors.save_file(model, tensor_file_path, max_shard_size="100GB")
+
+        # Check that only one file was created (no shard suffix)
+        self.assertTrue(tensor_file_path.exists())
+
+        # Check that no index file was created
+        index_file = pathlib.Path(self.temp_dir.name) / "weights.safetensors.index.json"
+        self.assertFalse(index_file.exists())
+
+        # Check that no shard files were created
+        shard_files = list(
+            pathlib.Path(self.temp_dir.name).glob("weights-*.safetensors")
+        )
+        self.assertEqual(len(shard_files), 0)
+
+    def test_save_model_with_max_shard_size(self) -> None:
+        # Create a model with multiple tensors
+        tensor1 = np.arange(1000).reshape(100, 10).astype(np.float32)
+        tensor2 = np.arange(2000).reshape(200, 10).astype(np.float32)
+
+        initializers = [
+            onnx.numpy_helper.from_array(tensor1, name="tensor1"),
+            onnx.numpy_helper.from_array(tensor2, name="tensor2"),
+        ]
+
+        graph = onnx.helper.make_graph(
+            [],
+            "test_graph",
+            inputs=[],
+            outputs=[],
+            initializer=initializers,
+        )
+        model = onnx.helper.make_model(graph)
+
+        model_path = pathlib.Path(self.temp_dir.name) / "model.onnx"
+        external_data_path = "weights.safetensors"
+
+        # Save with small shard size
+        onnx_safetensors.save_model(
+            model, model_path, external_data_path, max_shard_size="5KB"
+        )
+
+        # Verify model file was created
+        self.assertTrue(model_path.exists())
+
+        # Check that shard files were created
+        shard_files = list(
+            pathlib.Path(self.temp_dir.name).glob("weights-*.safetensors")
+        )
+        self.assertGreater(len(shard_files), 0)
+
+        # Check that index file was created
+        index_file = pathlib.Path(self.temp_dir.name) / "weights.safetensors.index.json"
+        self.assertTrue(index_file.exists())
+
+    def test_parse_size_string(self) -> None:
+        # Test the size string parsing
+        from onnx_safetensors._safetensors_io import _parse_size_string
+
+        self.assertEqual(_parse_size_string("5GB"), 5 * 1024**3)
+        self.assertEqual(_parse_size_string("100MB"), 100 * 1024**2)
+        self.assertEqual(_parse_size_string("1KB"), 1024)
+        self.assertEqual(_parse_size_string("512B"), 512)
+        self.assertEqual(_parse_size_string(1024), 1024)
+        self.assertEqual(_parse_size_string("5G"), 5 * 1024**3)
+        self.assertEqual(_parse_size_string("100M"), 100 * 1024**2)
+
+        # Test invalid formats
+        with self.assertRaises(ValueError):
+            _parse_size_string("invalid")
+        with self.assertRaises(ValueError):
+            _parse_size_string("5XB")
+
+    def test_get_shard_filename(self) -> None:
+        # Test shard filename generation
+        from onnx_safetensors._safetensors_io import _get_shard_filename
+
+        self.assertEqual(
+            _get_shard_filename("model.safetensors", 1, 3),
+            "model-00001-of-00003.safetensors",
+        )
+        self.assertEqual(
+            _get_shard_filename("model.safetensors", 10, 100),
+            "model-00010-of-00100.safetensors",
+        )
+        self.assertEqual(
+            _get_shard_filename("model.safetensors", 1, 1),
+            "model.safetensors",
+        )
 
 
 if __name__ == "__main__":
