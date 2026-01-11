@@ -97,10 +97,10 @@ def _parse_size_string(size: int | str) -> int:
     unit = unit.upper()
     multipliers = {
         "B": 1,
-        "KB": 1024,
-        "MB": 1024**2,
-        "GB": 1024**3,
-        "TB": 1024**4,
+        "KB": 1000,
+        "MB": 1000**2,
+        "GB": 1000**3,
+        "TB": 1000**4,
     }
 
     if unit not in multipliers:
