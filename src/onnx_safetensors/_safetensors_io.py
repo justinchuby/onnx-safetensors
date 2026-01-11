@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any, TypeVar
 import onnx
 import onnx_ir as ir
 import safetensors
+from tqdm.auto import tqdm
 
 from onnx_safetensors import _tensors
 
@@ -359,7 +360,7 @@ def save(model: TModel, /, *, size_threshold: int = 0) -> bytes:
     return safetensors.serialize(tensor_dict)
 
 
-def save_file(
+def save_file(  # noqa: PLR0912
     model: TModel,
     /,
     location: str | os.PathLike,
@@ -426,7 +427,12 @@ def save_file(
 
         # Save each shard
         all_shards = []
-        for shard_idx, shard_dict in enumerate(shards, start=1):
+        for shard_idx, shard_dict in tqdm(
+            enumerate(shards, start=1),
+            total=total_shards,
+            desc="Saving shards",
+            disable=total_shards == 1,
+        ):
             shard_filename = _get_shard_filename(str(location), shard_idx, total_shards)
             shard_path = os.path.join(base_dir, shard_filename)
             all_shards.append(shard_path)

@@ -15,6 +15,7 @@ import safetensors.numpy
 import onnx_ir as ir
 
 import onnx_safetensors
+from onnx_safetensors._safetensors_io import _get_shard_filename, _parse_size_string
 
 
 def _create_tensor(value: Any, tensor_name: str) -> onnx.TensorProto:
@@ -475,8 +476,6 @@ class PublicIrApiTest(unittest.TestCase):
 
     def test_parse_size_string(self) -> None:
         # Test the size string parsing
-        from onnx_safetensors._safetensors_io import _parse_size_string
-
         self.assertEqual(_parse_size_string("5GB"), 5 * 1024**3)
         self.assertEqual(_parse_size_string("100MB"), 100 * 1024**2)
         self.assertEqual(_parse_size_string("1KB"), 1024)
@@ -491,8 +490,6 @@ class PublicIrApiTest(unittest.TestCase):
 
     def test_get_shard_filename(self) -> None:
         # Test shard filename generation
-        from onnx_safetensors._safetensors_io import _get_shard_filename
-
         self.assertEqual(
             _get_shard_filename("model.safetensors", 1, 3),
             "model-00001-of-00003.safetensors",
