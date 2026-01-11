@@ -151,15 +151,12 @@ def _shard_tensors(
     """
     max_size_bytes = _parse_size_string(max_shard_size)
 
-    # Sort tensors by name to preserve model structure
-    sorted_tensors = sorted(tensor_metadata.items(), key=lambda x: x[0])
-
-    # Shard the tensors by name
+    # Shard the tensors by current order
     shards: list[list[str]] = [[]]
     current_shard_size = 0
     weight_map: dict[str, str] = {}  # Maps tensor name to shard filename
 
-    for tensor_name, metadata in sorted_tensors:
+    for tensor_name, metadata in tensor_metadata.items():
         tensor_size = metadata["size"]
         # Check if adding this tensor would exceed max_shard_size
         if current_shard_size + tensor_size > max_size_bytes and current_shard_size > 0:
@@ -356,7 +353,7 @@ def save(model: TModel, /, *, size_threshold: int = 0) -> bytes:
     return safetensors.serialize(tensor_dict)
 
 
-def save_file(  # noqa: PLR0912
+def save_file(  # noqa: PLR0912, PLR0915
     model: TModel,
     /,
     location: str | os.PathLike,
@@ -430,21 +427,15 @@ def save_file(  # noqa: PLR0912
 
             # Save each shard, loading only necessary tensor data
             all_shards = []
-            for shard_idx, tensor_names in (
-                pbar := tqdm(
-                    enumerate(shard_tensor_names, start=1),
-                    total=total_shards,
-                    disable=total_shards == 1,
-                )
-            ):
+            for shard_idx, tensor_names in enumerate(shard_tensor_names, start=1):
                 shard_filename = _get_shard_filename(
                     str(location), shard_idx, total_shards
                 )
-                pbar.set_description(f"Saving {shard_filename}")
 
                 # Build tensor_dict for this shard only
                 shard_dict = {}
-                for tensor_name in tensor_names:
+                for tensor_name in (pbar := tqdm(tensor_names)):
+                    pbar.set_description(f"Saving {shard_filename} ({tensor_name})")
                     tensor = model_ir.graph.initializers[tensor_name].const_value
                     shard_dict[tensor_name] = {
                         "dtype": tensor_metadata[tensor_name]["dtype"],
