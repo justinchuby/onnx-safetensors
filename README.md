@@ -75,6 +75,55 @@ model_with_external_data = onnx_safetensors.save_file(model, data_path, base_dir
 onnx.save(model_with_external_data, os.path.join(base_dir, "model_using_safetensors.onnx"))
 ```
 
+### Save an ONNX model with safetensors weights
+
+The `save_model` function is a convenient way to save both the ONNX model and its weights to separate files:
+
+```python
+import onnx_safetensors
+
+# Provide your ONNX model here
+model: onnx.ModelProto
+
+# Save model and weights in one step
+# This creates model.onnx and model.safetensors
+onnx_safetensors.save_model(model, "model.onnx")
+
+# You can also specify a custom name for the weights file
+onnx_safetensors.save_model(model, "model.onnx", external_data="weights.safetensors")
+```
+
+### Shard large models
+
+For large models, you can automatically shard the weights across multiple safetensors files:
+
+```python
+import onnx_safetensors
+
+# Provide your ONNX model here
+model: onnx.ModelProto
+
+# Shard the model into multiple files (e.g., 5GB per shard)
+# This creates:
+# - model.onnx
+# - model-00001-of-00003.safetensors
+# - model-00002-of-00003.safetensors
+# - model-00003-of-00003.safetensors
+# - model.safetensors.index.json (index file mapping tensors to shards)
+onnx_safetensors.save_model(model, "model.onnx", max_shard_size="5GB")
+
+# You can also use save_file with sharding
+onnx_safetensors.save_file(
+    model,
+    "weights.safetensors",
+    base_dir="path/to/save",
+    max_shard_size="5GB"
+)
+```
+
+The sharding format is compatible with the Hugging Face transformers library, making it easy to share and load models across different frameworks.
+
 ## Examples
 
 - [Tutorial notebook](examples/tutorial.ipynb)
+- [save_model and sharding examples](examples/save_model_sharding.py)
