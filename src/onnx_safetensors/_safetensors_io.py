@@ -371,10 +371,10 @@ def save_file(  # noqa: PLR0912, PLR0915
         The *convert_attributes* and *strip_data* parameters were removed. Set
         *replace_data* to achieve similar effect as *strip_data*.
     .. versionchanged:: 1.0.0
+        The return value is now the updated ONNX model instead of a set of saved tensor names.
     .. versionadded:: 1.0.1
         The *base_dir* parameter was added so the external data can be referenced
         relative to the ONNX model file correctly.
-        The return value is now the updated ONNX model instead of a set of saved tensor names.
     .. versionadded:: 1.3.0
         The *max_shard_size* parameter was added to support sharding large models.
 
