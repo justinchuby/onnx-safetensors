@@ -490,10 +490,11 @@ def save_file(  # noqa: PLR0912, PLR0915
                 # TODO: Return a memoryview when safetensors supports it.
                 "data": tensor.tobytes(),
             }
-        tensor_file = os.path.join(base_dir, location)
-        safetensors.serialize_file(tensor_dict, tensor_file)
-        if replace_data:
-            replace_tensors(model_ir, location, base_dir)
+        if tensor_dict:
+            tensor_file = os.path.join(base_dir, location)
+            safetensors.serialize_file(tensor_dict, tensor_file)
+            if replace_data:
+                replace_tensors(model_ir, location, base_dir)
 
     if isinstance(model, onnx.ModelProto):
         return ir.serde.serialize_model(model_ir)
