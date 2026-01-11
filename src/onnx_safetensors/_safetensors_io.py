@@ -311,6 +311,44 @@ def save_file(
     return model_ir
 
 
+def save_model(
+    model: TModel,
+    location: str | os.PathLike,
+    external_data: str | os.PathLike,
+    *,
+    size_threshold: int = 0,
+) -> None:
+    """Save an ONNX model to a file with external data in a safetensors file.
+
+    Args:
+        model: ONNX model to save.
+        location: Path to the ONNX model file.
+        external_data: Path to the safetensors file relative to the ONNX model file.
+        size_threshold: Minimum size in bytes for a tensor to be saved.
+            Default is 0, which saves all tensors.
+
+    .. versionadded:: 1.3.0
+        Added the function.
+    """
+    # Ensure that external_data ends with .safetensors
+    if not str(external_data).endswith(".safetensors"):
+        raise ValueError(
+            f"The external_data file must have a .safetensors extension, got: {external_data}"
+        )
+    if isinstance(model, onnx.ModelProto):
+        model_ir = ir.serde.deserialize_model(model)
+    else:
+        model_ir = model
+    updated_model = save_file(
+        model_ir,
+        external_data,
+        os.path.dirname(location),
+        size_threshold=size_threshold,
+        replace_data=True,
+    )
+    ir.save(updated_model, location)
+
+
 def _read_safetensors_header(file: io.IOBase) -> tuple[dict[str, dict[str, Any]], int]:
     """Read the header of a safetensors file.
 
