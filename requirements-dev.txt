@@ -3,3 +3,4 @@ pytest-cov
 lintrunner
 lintrunner-adapters
 parameterized
+onnxruntime

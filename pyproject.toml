@@ -33,6 +33,7 @@ dependencies = [
   "onnx>=1.16",
   "safetensors",
   "onnx-ir",
+  "tqdm",
 ]
 
 [project.urls]

@@ -6,6 +6,7 @@ import io
 import json
 import math
 import os
+import re
 import struct
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, TypeVar
@@ -13,6 +14,7 @@ from typing import TYPE_CHECKING, Any, TypeVar
 import onnx
 import onnx_ir as ir
 import safetensors
+from tqdm.auto import tqdm
 
 from onnx_safetensors import _tensors
 
@@ -66,6 +68,108 @@ _IR_DTYPE_TO_SAFETENSORS_DTYPE = {
 TModel = TypeVar("TModel", onnx.ModelProto, ir.Model)
 
 
+def _parse_size_string(size: int | str) -> int:
+    """Parse a size string like '5GB' or '100MB' into bytes.
+
+    Args:
+        size: Either an integer representing bytes, or a string like '5GB', '100MB', etc.
+
+    Returns:
+        The size in bytes.
+
+    Raises:
+        ValueError: If the size string format is invalid.
+    """
+    if isinstance(size, int):
+        return size
+
+    size = size.strip()
+    match = re.match(r"(\d+(?:\.\d+)?)\s*([A-Za-z]+)", size)
+    if not match:
+        raise ValueError(
+            f"Invalid size format: {size}. Expected format like '5GB' or '100MB'."
+        )
+
+    num_str, unit = match.groups()
+    num = float(num_str)
+
+    # Convert to bytes
+    unit = unit.upper()
+    multipliers = {
+        "B": 1,
+        "KB": 1000,
+        "MB": 1000**2,
+        "GB": 1000**3,
+        "TB": 1000**4,
+    }
+
+    if unit not in multipliers:
+        raise ValueError(
+            f"Unknown size unit: {unit}. Valid units are: {', '.join(multipliers.keys())}"
+        )
+
+    return int(num * multipliers[unit])
+
+
+def _get_shard_filename(base_name: str, shard_idx: int, total_shards: int) -> str:
+    """Generate a filename for a shard.
+
+    Args:
+        base_name: The base filename (e.g., 'model.safetensors').
+        shard_idx: The index of this shard (1-indexed).
+        total_shards: The total number of shards.
+
+    Returns:
+        The shard filename (e.g., 'model-00001-of-00003.safetensors').
+    """
+    if total_shards == 1:
+        return base_name
+
+    # Extract extension
+    if "." in base_name:
+        name, ext = base_name.rsplit(".", 1)
+        ext = f".{ext}"
+    else:
+        name = base_name
+        ext = ""
+
+    # Always use 5 digits to follow transformers convention
+    return f"{name}-{shard_idx:05d}-of-{total_shards:05d}{ext}"
+
+
+def _shard_tensors(
+    tensor_metadata: dict[str, dict[str, Any]], max_shard_size: int | str
+) -> list[list[str]]:
+    """Shard tensors into multiple files based on max_shard_size.
+
+    Args:
+        tensor_metadata: Dictionary of tensor name to metadata (size, dtype, shape).
+        max_shard_size: Maximum size for each shard in bytes or as a string like '5GB'.
+
+    Returns:
+        A list of tensor name lists for each shard.
+    """
+    max_size_bytes = _parse_size_string(max_shard_size)
+
+    # Shard the tensors by current order
+    shards: list[list[str]] = [[]]
+    current_shard_size = 0
+
+    for tensor_name, metadata in tensor_metadata.items():
+        tensor_size = metadata["size"]
+        # Check if adding this tensor would exceed max_shard_size
+        if current_shard_size + tensor_size > max_size_bytes and current_shard_size > 0:
+            # Start a new shard
+            shards.append([])
+            current_shard_size = 0
+
+        # Add tensor name to current shard
+        shards[-1].append(tensor_name)
+        current_shard_size += tensor_size
+
+    return shards
+
+
 def _apply_tensors(
     model: ir.Model,
     tensors: Mapping[str, ir.TensorProtocol],
@@ -114,13 +218,13 @@ def replace_tensors(
 ) -> None:
     """Replace all tensors in an ONNX model with external data from a safetensors file.
 
+    .. versionadded:: 1.0
+        Added the function.
+
     Args:
         model: ONNX model to replace tensors in.
         location: Path to the safetensors file relative to the ONNX model file.
         base_dir: Directory where the ONNX model file is stored.
-
-    .. versionadded:: 1.0
-        Added the function.
     """
     tensors = _read_safetensors(location, base_dir=base_dir)
     _apply_tensors(model, tensors, apply_safetensors=True)
@@ -187,6 +291,9 @@ def load_file_as_external_data(
 ) -> TModel:
     """Load weights from safetensors file and use them as external data for the ONNX model.
 
+    .. versionadded:: 1.0
+        Added the function.
+
     Args:
         model: ONNX model or graph to load external data into.
         location: Path to the safetensors file relative to the ONNX model file.
@@ -194,9 +301,6 @@ def load_file_as_external_data(
 
     Returns:
         The ONNX model with the external data.
-
-    .. versionadded:: 1.0
-        Added the function.
     """
     if isinstance(model, onnx.ModelProto):
         model_ir = ir.serde.deserialize_model(model)
@@ -248,7 +352,7 @@ def save(model: TModel, /, *, size_threshold: int = 0) -> bytes:
     return safetensors.serialize(tensor_dict)
 
 
-def save_file(
+def save_file(  # noqa: PLR0912, PLR0915
     model: TModel,
     /,
     location: str | os.PathLike,
@@ -256,8 +360,23 @@ def save_file(
     *,
     size_threshold: int = 0,
     replace_data: bool = True,
+    max_shard_size: int | str | None = None,
 ) -> TModel:
     """Save all tensors in an ONNX model to a safetensors file.
+
+    .. versionadded:: 1.0.0
+        The *replace_data* parameter was added to allow the user to choose
+        whether to replace the data in the ONNX model with the external data.
+    .. versionremoved:: 1.0.0
+        The *convert_attributes* and *strip_data* parameters were removed. Set
+        *replace_data* to achieve similar effect as *strip_data*.
+    .. versionchanged:: 1.0.0
+        The return value is now the updated ONNX model instead of a set of saved tensor names.
+    .. versionadded:: 1.0.1
+        The *base_dir* parameter was added so the external data can be referenced
+        relative to the ONNX model file correctly.
+    .. versionadded:: 1.3.0
+        The *max_shard_size* parameter was added to support sharding large models.
 
     Args:
         model: ONNX model proto to save.
@@ -267,48 +386,182 @@ def save_file(
             Default is 0, which saves all tensors.
         replace_data: Whether to replace the data in the ONNX model with
             the external data. Default is True.
+        max_shard_size: Maximum size in bytes (as int) or as a string with unit
+            (like "5GB" or "100MB") for a checkpoint before being sharded.
+            If None, no sharding is performed.
 
     Returns:
         The ONNX model with the external data.
-
-    .. versionadded:: 1.0.1
-        The *base_dir* parameter was added so the external data can be referenced
-        relative to the ONNX model file correctly.
-    .. versionadded:: 1.0
-        The *replace_data* parameter was added to allow the user to choose
-        whether to replace the data in the ONNX model with the external data.
-    .. versionremoved:: 1.0
-        The *convert_attributes* and *strip_data* parameters were removed. Set
-        *replace_data* to achieve similar effect as *strip_data*.
-    .. versionchanged:: 1.0
-        The return value is now the updated ONNX model instead of a set of saved tensor names.
     """
+    # Ensure that external_data ends with .safetensors
+    if not str(location).endswith(".safetensors"):
+        raise ValueError(
+            f"The path to safetensors file must have a .safetensors extension, got: {location}"
+        )
     if isinstance(model, onnx.ModelProto):
         model_ir = ir.serde.deserialize_model(model)
     else:
         model_ir = model
 
-    tensor_dict = {}
-    for name, initializer in model_ir.graph.initializers.items():
-        if initializer.const_value is None:
-            continue
-        if initializer.const_value.size < size_threshold:
-            continue
-        tensor = initializer.const_value
-        tensor_dict[name] = {
-            "dtype": _IR_DTYPE_TO_SAFETENSORS_DTYPE[tensor.dtype],
-            "shape": _get_tensor_storage_shape(tensor),
-            # TODO: Return a memoryview when safetensors supports it.
-            "data": tensor.tobytes(),
-        }
-    tensor_file = os.path.join(base_dir, location)
-    safetensors.serialize_file(tensor_dict, tensor_file)
-    if replace_data:
-        replace_tensors(model_ir, location, base_dir)
+    # Handle sharding if max_shard_size is specified
+    if max_shard_size is not None:
+        # First, collect metadata without loading tensor data
+        tensor_metadata = {}
+        total_size = 0
+        for name, initializer in model_ir.graph.initializers.items():
+            if initializer.const_value is None:
+                continue
+            if initializer.const_value.size < size_threshold:
+                continue
+            tensor = initializer.const_value
+            tensor_size = tensor.nbytes
+            tensor_metadata[name] = {
+                "size": tensor_size,
+                "dtype": _IR_DTYPE_TO_SAFETENSORS_DTYPE[tensor.dtype],
+                "shape": _get_tensor_storage_shape(tensor),
+            }
+            total_size += tensor_size
+
+        if tensor_metadata:
+            # Determine sharding based on metadata only
+            shard_tensor_names = _shard_tensors(tensor_metadata, max_shard_size)
+            total_shards = len(shard_tensor_names)
+
+            # Save each shard, loading only necessary tensor data
+            all_shards = []
+            weight_map: dict[str, str] = {}  # Maps tensor name to shard filename
+            for shard_idx, tensor_names in enumerate(shard_tensor_names, start=1):
+                shard_filename = _get_shard_filename(
+                    str(location), shard_idx, total_shards
+                )
+
+                # Build tensor_dict for this shard only
+                shard_dict = {}
+                for tensor_name in (pbar := tqdm(tensor_names)):
+                    pbar.set_description(f"Saving {shard_filename} ({tensor_name})")
+                    tensor = model_ir.graph.initializers[tensor_name].const_value
+                    shard_dict[tensor_name] = {
+                        "dtype": tensor_metadata[tensor_name]["dtype"],
+                        "shape": tensor_metadata[tensor_name]["shape"],
+                        "data": tensor.tobytes(),
+                    }
+
+                shard_path = os.path.join(base_dir, shard_filename)
+                all_shards.append(shard_filename)
+                safetensors.serialize_file(shard_dict, shard_path)
+
+                # Update weight_map with shard filename
+                for tensor_name in tensor_names:
+                    weight_map[tensor_name] = shard_filename
+
+            # Save index file if sharding occurred
+            if total_shards > 1:
+                location_str = str(location)
+                if location_str.endswith(".safetensors"):
+                    index_filename = (
+                        location_str.rsplit(".safetensors", 1)[0]
+                        + ".safetensors.index.json"
+                    )
+                else:
+                    index_filename = location_str + ".index.json"
+                index_path = os.path.join(base_dir, index_filename)
+                index_data = {
+                    "metadata": {"total_size": total_size},
+                    "weight_map": weight_map,
+                }
+                with open(index_path, "w") as f:
+                    json.dump(index_data, f, indent=2)
+
+            # For replace_data, replace tensors from each shard
+            if replace_data:
+                # When sharded, replace tensors from each shard file
+                for file_name in all_shards:
+                    replace_tensors(model_ir, file_name, base_dir)
+        else:
+            # No tensors to save
+            pass
+    else:
+        # No sharding - load all tensor data at once
+        tensor_dict = {}
+        for name, initializer in model_ir.graph.initializers.items():
+            if initializer.const_value is None:
+                continue
+            if initializer.const_value.size < size_threshold:
+                continue
+            tensor = initializer.const_value
+            tensor_dict[name] = {
+                "dtype": _IR_DTYPE_TO_SAFETENSORS_DTYPE[tensor.dtype],
+                "shape": _get_tensor_storage_shape(tensor),
+                # TODO: Return a memoryview when safetensors supports it.
+                "data": tensor.tobytes(),
+            }
+        if tensor_dict:
+            tensor_file = os.path.join(base_dir, location)
+            safetensors.serialize_file(tensor_dict, tensor_file)
+            if replace_data:
+                replace_tensors(model_ir, location, base_dir)
 
     if isinstance(model, onnx.ModelProto):
         return ir.serde.serialize_model(model_ir)
     return model_ir
+
+
+def save_model(
+    model: TModel,
+    model_path: str | os.PathLike,
+    /,
+    *,
+    external_data: str | os.PathLike | None = None,
+    size_threshold: int = 0,
+    max_shard_size: int | str | None = None,
+) -> None:
+    """Save an ONNX model to a file with external data in a safetensors file.
+
+    .. versionadded:: 1.3.0
+        Added the function.
+
+    Args:
+        model: ONNX model to save.
+        model_path: Path to the ONNX model file. E.g. "model.onnx".
+        external_data: Path to the safetensors file relative to the ONNX model file.
+            E.g. "model.safetensors". If not provided, it will be derived from
+            the model_path by replacing the extension with ".safetensors".
+        size_threshold: Minimum size in bytes for a tensor to be saved.
+            Default is 0, which saves all tensors.
+        max_shard_size: Maximum size in bytes for a checkpoint before being sharded.
+            If expressed as a string, needs to be digits followed by a unit
+            (like "5GB" or "100MB"). If None, no sharding is performed.
+            When sharding is enabled, multiple safetensors files will be created
+            with names like "model-00001-of-00003.safetensors", and an index
+            file "model.safetensors.index.json" will be created to map tensors
+            to their respective shard files.
+
+    Raises:
+        ValueError: If external_data does not end with ".safetensors".
+    """
+    # Derive external_data from model_path if not provided
+    if external_data is None:
+        model_path_str = str(model_path)
+        # Get the base name without extension
+        if "." in os.path.basename(model_path_str):
+            base_name = os.path.splitext(os.path.basename(model_path_str))[0]
+        else:
+            base_name = os.path.basename(model_path_str)
+        external_data = f"{base_name}.safetensors"
+
+    if isinstance(model, onnx.ModelProto):
+        model_ir = ir.serde.deserialize_model(model)
+    else:
+        model_ir = model
+    updated_model = save_file(
+        model_ir,
+        external_data,
+        os.path.dirname(model_path),
+        size_threshold=size_threshold,
+        replace_data=True,
+        max_shard_size=max_shard_size,
+    )
+    ir.save(updated_model, model_path)
 
 
 def _read_safetensors_header(file: io.IOBase) -> tuple[dict[str, dict[str, Any]], int]:
