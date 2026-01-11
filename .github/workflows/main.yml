@@ -20,7 +20,7 @@ jobs:
     permissions:
       security-events: write
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v6
     - name: Set up Python "3.12"
       uses: actions/setup-python@v3
       with:
@@ -37,7 +37,7 @@ jobs:
         python_version: ["3.9", "3.12"]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Setup Python
         uses: actions/setup-python@v4
         with:
@@ -60,7 +60,7 @@ jobs:
     needs: [test]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Setup Python
         uses: actions/setup-python@v4
         with:
