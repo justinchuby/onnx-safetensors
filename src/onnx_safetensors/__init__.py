@@ -7,6 +7,7 @@ __all__ = [
     "replace_tensors",
     "save",
     "save_file",
+    "save_model",
 ]
 
 from onnx_safetensors._safetensors_io import (
@@ -16,6 +17,7 @@ from onnx_safetensors._safetensors_io import (
     replace_tensors,
     save,
     save_file,
+    save_model,
 )
 
 __version__ = "1.2.0"

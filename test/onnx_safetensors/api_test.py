@@ -110,6 +110,72 @@ class PublicApiTest(unittest.TestCase):
         for key in tensors:
             np.testing.assert_array_equal(tensors[key], self.model_tensor_dict[key])
 
+    def test_save_model_creates_onnx_and_safetensors_files(self) -> None:
+        model_path = pathlib.Path(self.temp_dir.name) / "model.onnx"
+        external_data_path = "weights.safetensors"
+
+        onnx_safetensors.save_model(self.model, model_path, external_data_path)
+
+        # Verify both files were created
+        self.assertTrue(model_path.exists())
+        self.assertTrue((pathlib.Path(self.temp_dir.name) / external_data_path).exists())
+
+        # Load and verify the saved model
+        loaded_model = onnx.load(model_path)
+        self.assertIsNotNone(loaded_model)
+
+        # Verify safetensors file contains the correct tensors
+        tensors = safetensors.numpy.load_file(
+            pathlib.Path(self.temp_dir.name) / external_data_path
+        )
+        for key in tensors:
+            np.testing.assert_array_equal(tensors[key], self.model_tensor_dict[key])
+
+    def test_save_model_requires_safetensors_extension(self) -> None:
+        model_path = pathlib.Path(self.temp_dir.name) / "model.onnx"
+        invalid_external_data_path = "weights.bin"
+
+        with self.assertRaises(ValueError) as context:
+            onnx_safetensors.save_model(self.model, model_path, invalid_external_data_path)
+
+        self.assertIn(".safetensors", str(context.exception))
+
+    def test_save_model_with_size_threshold(self) -> None:
+        model_path = pathlib.Path(self.temp_dir.name) / "model.onnx"
+        external_data_path = "weights.safetensors"
+
+        # Use a high threshold to exclude all tensors
+        onnx_safetensors.save_model(
+            self.model, model_path, external_data_path, size_threshold=1000
+        )
+
+        # Verify model file was created
+        self.assertTrue(model_path.exists())
+
+        # Verify safetensors file exists but is empty or minimal
+        safetensors_path = pathlib.Path(self.temp_dir.name) / external_data_path
+        self.assertTrue(safetensors_path.exists())
+
+        # With high threshold, no tensors should be saved
+        tensors = safetensors.numpy.load_file(safetensors_path)
+        self.assertEqual(len(tensors), 0)
+
+    def test_save_model_external_data_is_relative_path(self) -> None:
+        model_path = pathlib.Path(self.temp_dir.name) / "model.onnx"
+        external_data_path = "weights.safetensors"
+
+        onnx_safetensors.save_model(self.model, model_path, external_data_path)
+
+        # Load the model and check that external data references are relative
+        loaded_model = onnx.load(model_path)
+        for initializer in loaded_model.graph.initializer:
+            if initializer.HasField("data_location"):
+                if initializer.data_location == onnx.TensorProto.EXTERNAL:
+                    for entry in initializer.external_data:
+                        if entry.key == "location":
+                            # The location should be just the filename, not an absolute path
+                            self.assertEqual(entry.value, external_data_path)
+
 
 def _create_test_ir_model(dtype: ir.DataType) -> ir.Model:
     input_ = ir.Input(
@@ -231,6 +297,59 @@ class PublicIrApiTest(unittest.TestCase):
             tensors = safetensors.deserialize(f.read())
         tensor = ir.tensor([0, 1, 6], dtype=dtype)
         self.assertEqual(tensors[0][1]["data"], tensor.tobytes())
+
+    def test_save_model_from_ir_model(self) -> None:
+        model = _create_test_ir_model(ir.DataType.FLOAT)
+        model_path = pathlib.Path(self.temp_dir.name) / "model.onnx"
+        external_data_path = "weights.safetensors"
+
+        onnx_safetensors.save_model(model, model_path, external_data_path)
+
+        # Verify both files were created
+        self.assertTrue(model_path.exists())
+        self.assertTrue((pathlib.Path(self.temp_dir.name) / external_data_path).exists())
+
+        # Load and verify the saved model
+        loaded_model = onnx.load(model_path)
+        self.assertIsNotNone(loaded_model)
+
+        # Verify safetensors file contains the correct tensor
+        with open(pathlib.Path(self.temp_dir.name) / external_data_path, "rb") as f:
+            tensors = safetensors.deserialize(f.read())
+        tensor = ir.tensor([0, 1, 6], dtype=ir.DataType.FLOAT)
+        self.assertEqual(tensors[0][1]["data"], tensor.tobytes())
+
+    def test_save_model_from_ir_model_requires_safetensors_extension(self) -> None:
+        model = _create_test_ir_model(ir.DataType.FLOAT)
+        model_path = pathlib.Path(self.temp_dir.name) / "model.onnx"
+        invalid_external_data_path = "weights.bin"
+
+        with self.assertRaises(ValueError) as context:
+            onnx_safetensors.save_model(model, model_path, invalid_external_data_path)
+
+        self.assertIn(".safetensors", str(context.exception))
+
+    def test_save_model_from_ir_model_with_size_threshold(self) -> None:
+        model = _create_test_ir_model(ir.DataType.FLOAT)
+        model_path = pathlib.Path(self.temp_dir.name) / "model.onnx"
+        external_data_path = "weights.safetensors"
+
+        # Use a high threshold to exclude all tensors
+        onnx_safetensors.save_model(
+            model, model_path, external_data_path, size_threshold=1000
+        )
+
+        # Verify model file was created
+        self.assertTrue(model_path.exists())
+
+        # Verify safetensors file exists
+        safetensors_path = pathlib.Path(self.temp_dir.name) / external_data_path
+        self.assertTrue(safetensors_path.exists())
+
+        # With high threshold, no tensors should be saved
+        with open(safetensors_path, "rb") as f:
+            tensors = safetensors.deserialize(f.read())
+        self.assertEqual(len(tensors), 0)
 
 
 if __name__ == "__main__":
