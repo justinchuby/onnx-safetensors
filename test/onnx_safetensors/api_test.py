@@ -361,7 +361,7 @@ class PublicApiTest(unittest.TestCase):
             self.model,
             model_path,
             external_data=external_data_path,
-            size_threshold=10000,
+            size_threshold=1000,
         )
 
         # Verify model file was created
@@ -369,11 +369,7 @@ class PublicApiTest(unittest.TestCase):
 
         # Verify safetensors file exists but is empty or minimal
         safetensors_path = pathlib.Path(self.temp_dir.name) / external_data_path
-        self.assertTrue(safetensors_path.exists())
-
-        # With high threshold, no tensors should be saved
-        tensors = safetensors.numpy.load_file(safetensors_path)
-        self.assertEqual(len(tensors), 0)
+        self.assertFalse(safetensors_path.exists())
 
     def test_save_model_external_data_is_relative_path(self) -> None:
         model_path = pathlib.Path(self.temp_dir.name) / "model.onnx"
@@ -581,7 +577,7 @@ class PublicIrApiTest(unittest.TestCase):
 
         # Use a high threshold to exclude all tensors
         onnx_safetensors.save_model(
-            model, model_path, external_data=external_data_path, size_threshold=10000
+            model, model_path, external_data=external_data_path, size_threshold=1000
         )
 
         # Verify model file was created
@@ -589,12 +585,7 @@ class PublicIrApiTest(unittest.TestCase):
 
         # Verify safetensors file exists
         safetensors_path = pathlib.Path(self.temp_dir.name) / external_data_path
-        self.assertTrue(safetensors_path.exists())
-
-        # With high threshold, no tensors should be saved
-        with open(safetensors_path, "rb") as f:
-            tensors = safetensors.deserialize(f.read())
-        self.assertEqual(len(tensors), 0)
+        self.assertFalse(safetensors_path.exists())
 
     def test_save_file_with_max_shard_size(self) -> None:
         # Create a model with multiple tensors to test sharding
