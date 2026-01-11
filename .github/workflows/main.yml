@@ -22,7 +22,7 @@ jobs:
     steps:
     - uses: actions/checkout@v4
     - name: Set up Python "3.12"
-      uses: actions/setup-python@v3
+      uses: actions/setup-python@v6
       with:
         python-version: "3.12"
     - name: Lint with lintrunner
@@ -39,7 +39,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Setup Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python_version }}
       - name: Install dependencies
@@ -62,7 +62,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Setup Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v6
         with:
           python-version: "3.12"
       - name: Install Python build dependencies
