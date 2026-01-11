@@ -139,7 +139,7 @@ def _get_shard_filename(base_name: str, shard_idx: int, total_shards: int) -> st
 
 def _shard_tensors(
     tensor_metadata: dict[str, dict[str, Any]], max_shard_size: int | str
-) -> tuple[list[list[str]], dict[str, str]]:
+) -> list[list[str]]:
     """Shard tensors into multiple files based on max_shard_size.
 
     Args:
@@ -147,14 +147,13 @@ def _shard_tensors(
         max_shard_size: Maximum size for each shard in bytes or as a string like '5GB'.
 
     Returns:
-        A tuple of (list of tensor name lists for each shard, weight map dict).
+        A list of tensor name lists for each shard.
     """
     max_size_bytes = _parse_size_string(max_shard_size)
 
     # Shard the tensors by current order
     shards: list[list[str]] = [[]]
     current_shard_size = 0
-    weight_map: dict[str, str] = {}  # Maps tensor name to shard filename
 
     for tensor_name, metadata in tensor_metadata.items():
         tensor_size = metadata["size"]
@@ -168,7 +167,7 @@ def _shard_tensors(
         shards[-1].append(tensor_name)
         current_shard_size += tensor_size
 
-    return shards, weight_map
+    return shards
 
 
 def _apply_tensors(
@@ -219,13 +218,13 @@ def replace_tensors(
 ) -> None:
     """Replace all tensors in an ONNX model with external data from a safetensors file.
 
+    .. versionadded:: 1.0
+        Added the function.
+
     Args:
         model: ONNX model to replace tensors in.
         location: Path to the safetensors file relative to the ONNX model file.
         base_dir: Directory where the ONNX model file is stored.
-
-    .. versionadded:: 1.0
-        Added the function.
     """
     tensors = _read_safetensors(location, base_dir=base_dir)
     _apply_tensors(model, tensors, apply_safetensors=True)
@@ -292,6 +291,9 @@ def load_file_as_external_data(
 ) -> TModel:
     """Load weights from safetensors file and use them as external data for the ONNX model.
 
+    .. versionadded:: 1.0
+        Added the function.
+
     Args:
         model: ONNX model or graph to load external data into.
         location: Path to the safetensors file relative to the ONNX model file.
@@ -299,9 +301,6 @@ def load_file_as_external_data(
 
     Returns:
         The ONNX model with the external data.
-
-    .. versionadded:: 1.0
-        Added the function.
     """
     if isinstance(model, onnx.ModelProto):
         model_ir = ir.serde.deserialize_model(model)
@@ -365,6 +364,20 @@ def save_file(  # noqa: PLR0912, PLR0915
 ) -> TModel:
     """Save all tensors in an ONNX model to a safetensors file.
 
+    .. versionadded:: 1.0.0
+        The *replace_data* parameter was added to allow the user to choose
+        whether to replace the data in the ONNX model with the external data.
+    .. versionremoved:: 1.0.0
+        The *convert_attributes* and *strip_data* parameters were removed. Set
+        *replace_data* to achieve similar effect as *strip_data*.
+    .. versionchanged:: 1.0.0
+    .. versionadded:: 1.0.1
+        The *base_dir* parameter was added so the external data can be referenced
+        relative to the ONNX model file correctly.
+        The return value is now the updated ONNX model instead of a set of saved tensor names.
+    .. versionadded:: 1.3.0
+        The *max_shard_size* parameter was added to support sharding large models.
+
     Args:
         model: ONNX model proto to save.
         location: Path to the safetensors file relative to the ONNX model file.
@@ -379,21 +392,12 @@ def save_file(  # noqa: PLR0912, PLR0915
 
     Returns:
         The ONNX model with the external data.
-
-    .. versionadded:: 1.0
-        The *replace_data* parameter was added to allow the user to choose
-        whether to replace the data in the ONNX model with the external data.
-    .. versionremoved:: 1.0
-        The *convert_attributes* and *strip_data* parameters were removed. Set
-        *replace_data* to achieve similar effect as *strip_data*.
-    .. versionchanged:: 1.0
-    .. versionadded:: 1.0.1
-        The *base_dir* parameter was added so the external data can be referenced
-        relative to the ONNX model file correctly.
-        The return value is now the updated ONNX model instead of a set of saved tensor names.
-    .. versionadded:: 1.3.0
-        The *max_shard_size* parameter was added to support sharding large models.
     """
+    # Ensure that external_data ends with .safetensors
+    if not str(location).endswith(".safetensors"):
+        raise ValueError(
+            f"The path to safetensors file must have a .safetensors extension, got: {location}"
+        )
     if isinstance(model, onnx.ModelProto):
         model_ir = ir.serde.deserialize_model(model)
     else:
@@ -420,13 +424,12 @@ def save_file(  # noqa: PLR0912, PLR0915
 
         if tensor_metadata:
             # Determine sharding based on metadata only
-            shard_tensor_names, weight_map = _shard_tensors(
-                tensor_metadata, max_shard_size
-            )
+            shard_tensor_names = _shard_tensors(tensor_metadata, max_shard_size)
             total_shards = len(shard_tensor_names)
 
             # Save each shard, loading only necessary tensor data
             all_shards = []
+            weight_map: dict[str, str] = {}  # Maps tensor name to shard filename
             for shard_idx, tensor_names in enumerate(shard_tensor_names, start=1):
                 shard_filename = _get_shard_filename(
                     str(location), shard_idx, total_shards
@@ -508,6 +511,9 @@ def save_model(
 ) -> None:
     """Save an ONNX model to a file with external data in a safetensors file.
 
+    .. versionadded:: 1.3.0
+        Added the function.
+
     Args:
         model: ONNX model to save.
         model_path: Path to the ONNX model file. E.g. "model.onnx".
@@ -524,8 +530,8 @@ def save_model(
             file "model.safetensors.index.json" will be created to map tensors
             to their respective shard files.
 
-    .. versionadded:: 1.3.0
-        Added the function.
+    Raises:
+        ValueError: If external_data does not end with ".safetensors".
     """
     # Derive external_data from model_path if not provided
     if external_data is None:
@@ -537,11 +543,6 @@ def save_model(
             base_name = os.path.basename(model_path_str)
         external_data = f"{base_name}.safetensors"
 
-    # Ensure that external_data ends with .safetensors
-    if not str(external_data).endswith(".safetensors"):
-        raise ValueError(
-            f"The external_data file must have a .safetensors extension, got: {external_data}"
-        )
     if isinstance(model, onnx.ModelProto):
         model_ir = ir.serde.deserialize_model(model)
     else:
