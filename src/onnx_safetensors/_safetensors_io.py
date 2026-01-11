@@ -470,8 +470,8 @@ def save_file(  # noqa: PLR0912, PLR0915
             # For replace_data, replace tensors from each shard
             if replace_data:
                 # When sharded, replace tensors from each shard file
-                for shard_path in all_shards:
-                    replace_tensors(model_ir, shard_path, base_dir)
+                for file_name in all_shards:
+                    replace_tensors(model_ir, file_name, base_dir)
         else:
             # No tensors to save
             pass
