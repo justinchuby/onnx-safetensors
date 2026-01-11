@@ -138,41 +138,37 @@ def _get_shard_filename(base_name: str, shard_idx: int, total_shards: int) -> st
 
 
 def _shard_tensors(
-    tensor_dict: dict[str, dict[str, Any]], max_shard_size: int | str
-) -> tuple[list[dict[str, dict[str, Any]]], dict[str, Any]]:
+    tensor_metadata: dict[str, dict[str, Any]], max_shard_size: int | str
+) -> tuple[list[list[str]], dict[str, str]]:
     """Shard tensors into multiple files based on max_shard_size.
 
     Args:
-        tensor_dict: Dictionary of tensor name to tensor metadata.
+        tensor_metadata: Dictionary of tensor name to metadata (size, dtype, shape).
         max_shard_size: Maximum size for each shard in bytes or as a string like '5GB'.
 
     Returns:
-        A tuple of (list of sharded tensor dicts, weight map dict).
+        A tuple of (list of tensor name lists for each shard, weight map dict).
     """
     max_size_bytes = _parse_size_string(max_shard_size)
 
-    # Calculate tensor sizes
-    tensor_sizes = {}
-    for name, metadata in tensor_dict.items():
-        tensor_sizes[name] = len(metadata["data"])
-
     # Sort tensors by name to preserve model structure
-    sorted_tensors = sorted(tensor_sizes.items(), key=lambda x: x[0])
+    sorted_tensors = sorted(tensor_metadata.items(), key=lambda x: x[0])
 
-    # Shard the tensors
-    shards: list[dict[str, dict[str, Any]]] = [{}]
+    # Shard the tensors by name
+    shards: list[list[str]] = [[]]
     current_shard_size = 0
     weight_map: dict[str, str] = {}  # Maps tensor name to shard filename
 
-    for tensor_name, tensor_size in sorted_tensors:
+    for tensor_name, metadata in sorted_tensors:
+        tensor_size = metadata["size"]
         # Check if adding this tensor would exceed max_shard_size
         if current_shard_size + tensor_size > max_size_bytes and current_shard_size > 0:
             # Start a new shard
-            shards.append({})
+            shards.append([])
             current_shard_size = 0
 
-        # Add tensor to current shard
-        shards[-1][tensor_name] = tensor_dict[tensor_name]
+        # Add tensor name to current shard
+        shards[-1].append(tensor_name)
         current_shard_size += tensor_size
 
     return shards, weight_map
@@ -406,64 +402,93 @@ def save_file(  # noqa: PLR0912
     else:
         model_ir = model
 
-    tensor_dict = {}
-    for name, initializer in model_ir.graph.initializers.items():
-        if initializer.const_value is None:
-            continue
-        if initializer.const_value.size < size_threshold:
-            continue
-        tensor = initializer.const_value
-        tensor_dict[name] = {
-            "dtype": _IR_DTYPE_TO_SAFETENSORS_DTYPE[tensor.dtype],
-            "shape": _get_tensor_storage_shape(tensor),
-            # TODO: Return a memoryview when safetensors supports it.
-            "data": tensor.tobytes(),
-        }
-
     # Handle sharding if max_shard_size is specified
-    if max_shard_size is not None and tensor_dict:
-        shards, weight_map = _shard_tensors(tensor_dict, max_shard_size)
-        total_shards = len(shards)
-
-        # Save each shard
-        all_shards = []
-        for shard_idx, shard_dict in tqdm(
-            enumerate(shards, start=1),
-            total=total_shards,
-            desc="Saving shards",
-            disable=total_shards == 1,
-        ):
-            shard_filename = _get_shard_filename(str(location), shard_idx, total_shards)
-            shard_path = os.path.join(base_dir, shard_filename)
-            all_shards.append(shard_path)
-            safetensors.serialize_file(shard_dict, shard_path)
-
-            # Update weight_map with shard filename
-            for tensor_name in shard_dict:
-                weight_map[tensor_name] = shard_filename
-
-        # Save index file if sharding occurred
-        if total_shards > 1:
-            index_filename = str(location).replace(
-                ".safetensors", ".safetensors.index.json"
-            )
-            index_path = os.path.join(base_dir, index_filename)
-            index_data = {
-                "metadata": {
-                    "total_size": sum(len(t["data"]) for t in tensor_dict.values())
-                },
-                "weight_map": weight_map,
+    if max_shard_size is not None:
+        # First, collect metadata without loading tensor data
+        tensor_metadata = {}
+        total_size = 0
+        for name, initializer in model_ir.graph.initializers.items():
+            if initializer.const_value is None:
+                continue
+            if initializer.const_value.size < size_threshold:
+                continue
+            tensor = initializer.const_value
+            tensor_size = tensor.nbytes
+            tensor_metadata[name] = {
+                "size": tensor_size,
+                "dtype": _IR_DTYPE_TO_SAFETENSORS_DTYPE[tensor.dtype],
+                "shape": _get_tensor_storage_shape(tensor),
             }
-            with open(index_path, "w") as f:
-                json.dump(index_data, f, indent=2)
+            total_size += tensor_size
 
-        # For replace_data, replace tensors from each shard
-        if replace_data:
-            # When sharded, replace tensors from each shard file
-            for shard_path in all_shards:
-                replace_tensors(model_ir, shard_path, base_dir)
+        if tensor_metadata:
+            # Determine sharding based on metadata only
+            shard_tensor_names, weight_map = _shard_tensors(tensor_metadata, max_shard_size)
+            total_shards = len(shard_tensor_names)
+
+            # Save each shard, loading only necessary tensor data
+            all_shards = []
+            for shard_idx, tensor_names in tqdm(
+                enumerate(shard_tensor_names, start=1),
+                total=total_shards,
+                desc="Saving shards",
+                disable=total_shards == 1,
+            ):
+                # Build tensor_dict for this shard only
+                shard_dict = {}
+                for tensor_name in tensor_names:
+                    tensor = model_ir.graph.initializers[tensor_name].const_value
+                    shard_dict[tensor_name] = {
+                        "dtype": tensor_metadata[tensor_name]["dtype"],
+                        "shape": tensor_metadata[tensor_name]["shape"],
+                        "data": tensor.tobytes(),
+                    }
+
+                shard_filename = _get_shard_filename(str(location), shard_idx, total_shards)
+                shard_path = os.path.join(base_dir, shard_filename)
+                all_shards.append(shard_path)
+                safetensors.serialize_file(shard_dict, shard_path)
+
+                # Update weight_map with shard filename
+                for tensor_name in tensor_names:
+                    weight_map[tensor_name] = shard_filename
+
+            # Save index file if sharding occurred
+            if total_shards > 1:
+                index_filename = str(location).replace(
+                    ".safetensors", ".safetensors.index.json"
+                )
+                index_path = os.path.join(base_dir, index_filename)
+                index_data = {
+                    "metadata": {"total_size": total_size},
+                    "weight_map": weight_map,
+                }
+                with open(index_path, "w") as f:
+                    json.dump(index_data, f, indent=2)
+
+            # For replace_data, replace tensors from each shard
+            if replace_data:
+                # When sharded, replace tensors from each shard file
+                for shard_path in all_shards:
+                    replace_tensors(model_ir, shard_path, base_dir)
+        else:
+            # No tensors to save
+            pass
     else:
-        # No sharding
+        # No sharding - load all tensor data at once
+        tensor_dict = {}
+        for name, initializer in model_ir.graph.initializers.items():
+            if initializer.const_value is None:
+                continue
+            if initializer.const_value.size < size_threshold:
+                continue
+            tensor = initializer.const_value
+            tensor_dict[name] = {
+                "dtype": _IR_DTYPE_TO_SAFETENSORS_DTYPE[tensor.dtype],
+                "shape": _get_tensor_storage_shape(tensor),
+                # TODO: Return a memoryview when safetensors supports it.
+                "data": tensor.tobytes(),
+            }
         tensor_file = os.path.join(base_dir, location)
         safetensors.serialize_file(tensor_dict, tensor_file)
         if replace_data:
