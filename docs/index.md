@@ -1,4 +1,4 @@
-# ONNX SafeTensors
+# ONNX Safetensors
 
 ONNX extension for saving to and loading from safetensors 🤗.
 
