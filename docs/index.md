@@ -1,4 +1,4 @@
-# ONNX SafeTensors
+# ONNX Safetensors
 
 ONNX extension for saving to and loading from safetensors 🤗.
 
@@ -138,6 +138,7 @@ The `convert` command:
 
 ```{toctree}
 :maxdepth: 2
+:hidden:
 
 Overview <self>
 api
