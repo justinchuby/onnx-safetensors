@@ -6,7 +6,7 @@ import argparse
 import sys
 from pathlib import Path
 
-import onnx
+import onnx_ir as ir
 
 import onnx_safetensors
 
@@ -22,7 +22,7 @@ def convert_command(args: argparse.Namespace) -> None:
 
     # Load the ONNX model
     print(f"Loading ONNX model from {input_path}...")
-    model = onnx.load(input_path)
+    model = ir.load(input_path)
 
     # Save the model with safetensors
     print("Converting model to safetensors format...")
@@ -46,9 +46,7 @@ def main() -> int:
     convert_parser = subparsers.add_parser(
         "convert", help="Convert an ONNX model to use safetensors format"
     )
-    convert_parser.add_argument(
-        "input", type=str, help="Path to the input ONNX model"
-    )
+    convert_parser.add_argument("input", type=str, help="Path to the input ONNX model")
     convert_parser.add_argument(
         "output", type=str, help="Path to the output ONNX model"
     )
