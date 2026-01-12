@@ -23,7 +23,6 @@ release = version
 extensions = [
     "myst_parser",
     "sphinx_copybutton",
-    "sphinx_exec_code",
     "sphinx.ext.autodoc",
     "sphinx.ext.autosummary",
     "sphinx.ext.doctest",
@@ -45,7 +44,6 @@ myst_enable_extensions = [
     "fieldlist",
     "html_admonition",
     "html_image",
-    "linkify",
     "replacements",
     "smartquotes",
     "strikethrough",
