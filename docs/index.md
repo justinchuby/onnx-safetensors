@@ -138,6 +138,7 @@ The `convert` command:
 
 ```{toctree}
 :maxdepth: 2
+:hidden:
 
 Overview <self>
 api
