@@ -123,6 +123,28 @@ onnx_safetensors.save_file(
 
 The sharding format is compatible with the Hugging Face transformers library, making it easy to share and load models across different frameworks.
 
+### Command Line Interface
+
+ONNX-safetensors provides a command-line interface for converting ONNX models to use safetensors format:
+
+```bash
+# Basic conversion
+onnx-safetensors convert input.onnx output.onnx
+
+# Convert with sharding (split large models into multiple files)
+onnx-safetensors convert input.onnx output.onnx --max-shard-size 5GB
+
+# You can also specify size in MB
+onnx-safetensors convert input.onnx output.onnx --max-shard-size 500MB
+```
+
+The `convert` command:
+
+- Loads an ONNX model from the input path
+- Saves it with safetensors external data to the output path
+- Optionally shards large models using `--max-shard-size`
+- Creates index files automatically when sharding is enabled
+
 ## Examples
 
 - [Tutorial notebook](examples/tutorial.ipynb)
