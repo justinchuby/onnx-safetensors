@@ -13,7 +13,7 @@ import onnx_safetensors
 # -- Project information -----------------------------------------------------
 
 project = "onnx-safetensors"
-copyright = "Justin Chu. All rights reserved."
+copyright = "2026 Justin Chu. All rights reserved."
 author = "ONNX Contributors"
 version = onnx_safetensors.__version__
 release = version
