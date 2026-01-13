@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Any, TypeVar
 import onnx
 import onnx_ir as ir
 import safetensors
+from tqdm.auto import tqdm
 
 from onnx_safetensors import _tensors
 
@@ -459,8 +460,6 @@ def save_file(  # noqa: PLR0912
         # Save each shard, loading only necessary tensor data
         all_filenames = []
         weight_map: dict[str, str] = {}  # Maps tensor name to shard filename
-        current_offset = 0
-        current_index = 0
         for shard_idx, tensor_shard in enumerate(tensor_shards, start=1):
             shard_filename = _get_shard_filename(str(location), shard_idx, total_shards)
 
@@ -469,8 +468,9 @@ def save_file(  # noqa: PLR0912
 
             # Build tensor_dict for this shard only
             shard_dict: dict[str, Any] = {}
-            for tensor in tensor_shard:
+            for tensor in (pbar := tqdm(tensor_shard)):
                 assert tensor.name is not None
+                pbar.set_description(f"Saving {shard_filename} ({tensor.name})")
                 shard_dict[tensor.name] = {
                     "dtype": _IR_DTYPE_TO_SAFETENSORS_DTYPE[tensor.dtype],
                     "shape": _get_tensor_storage_shape(tensor),
@@ -478,8 +478,6 @@ def save_file(  # noqa: PLR0912
                 }
                 # Update weight_map with shard filename
                 weight_map[tensor.name] = shard_filename
-                current_offset += tensor.nbytes
-                current_index += 1
 
             safetensors.serialize_file(shard_dict, shard_path)
 
