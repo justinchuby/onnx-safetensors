@@ -4,11 +4,10 @@ from __future__ import annotations
 
 import io
 import json
-import math
 import os
 import re
 import struct
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING, Any, TypeVar
 
 import onnx
@@ -23,11 +22,14 @@ if TYPE_CHECKING:
 
 
 _HEADER_SIZE_NUMBER_SIZE = 8
+_BYTE_SIZE = 8
 # https://github.com/huggingface/safetensors/blob/543243c3017e413584f27ebd4b99c844f62deb34/safetensors/src/tensor.rs#L664
 _SAFETENSORS_DTYPE_TO_IR_DTYPE = {
     "BOOL": ir.DataType.BOOL,
+    "F4": ir.DataType.FLOAT4E2M1,
     "F8_E5M2": ir.DataType.FLOAT8E5M2,
     "F8_E4M3": ir.DataType.FLOAT8E4M3FN,
+    "F8_E8M0": ir.DataType.FLOAT8E8M0,
     "BF16": ir.DataType.BFLOAT16,
     "F16": ir.DataType.FLOAT16,
     "F32": ir.DataType.FLOAT,
@@ -40,28 +42,33 @@ _SAFETENSORS_DTYPE_TO_IR_DTYPE = {
     "U16": ir.DataType.UINT16,
     "U32": ir.DataType.UINT32,
     "U64": ir.DataType.UINT64,
+    "C64": ir.DataType.COMPLEX64,
 }
 _IR_DTYPE_TO_SAFETENSORS_DTYPE = {
     ir.DataType.BOOL: "bool",
-    ir.DataType.FLOAT4E2M1: "uint8",
+    ir.DataType.FLOAT4E2M1: "float4_e2m1fn_x2",
     ir.DataType.FLOAT8E5M2: "float8_e5m2",
     ir.DataType.FLOAT8E4M3FN: "float8_e4m3fn",
+    ir.DataType.FLOAT8E8M0: "float8_e8m0",
     ir.DataType.FLOAT8E4M3FNUZ: "uint8",
     ir.DataType.FLOAT8E5M2FNUZ: "uint8",
     ir.DataType.BFLOAT16: "bfloat16",
     ir.DataType.FLOAT16: "float16",
     ir.DataType.FLOAT: "float32",
     ir.DataType.DOUBLE: "float64",
+    ir.DataType.INT2: "uint8",
     ir.DataType.INT4: "uint8",
     ir.DataType.INT8: "int8",
     ir.DataType.INT16: "int16",
     ir.DataType.INT32: "int32",
     ir.DataType.INT64: "int64",
+    ir.DataType.UINT2: "uint8",
     ir.DataType.UINT4: "uint8",
     ir.DataType.UINT8: "uint8",
     ir.DataType.UINT16: "uint16",
     ir.DataType.UINT32: "uint32",
     ir.DataType.UINT64: "uint64",
+    ir.DataType.COMPLEX64: "complex64",
 }
 
 
@@ -138,79 +145,68 @@ def _get_shard_filename(base_name: str, shard_idx: int, total_shards: int) -> st
 
 
 def _shard_tensors(
-    tensor_metadata: dict[str, dict[str, Any]], max_shard_size: int | str
-) -> list[list[str]]:
-    """Shard tensors into multiple files based on max_shard_size.
+    tensors: Sequence[ir.TensorProtocol], max_shard_size_bytes: int | None
+) -> list[list[ir.TensorProtocol]]:
+    """Shard tensors into multiple files based on max_shard_size_bytes.
 
     Args:
-        tensor_metadata: Dictionary of tensor name to metadata (size, dtype, shape).
-        max_shard_size: Maximum size for each shard in bytes or as a string like '5GB'.
+        tensors: The tensors to shard.
+        max_shard_size_bytes: Maximum size for each shard in bytes. When None,
+            no sharding is performed.
 
     Returns:
-        A list of tensor name lists for each shard.
+        A list of tensor lists for each shard.
     """
-    max_size_bytes = _parse_size_string(max_shard_size)
+    if max_shard_size_bytes is None:
+        # No sharding
+        return [list(tensors)]
 
     # Shard the tensors by current order
-    shards: list[list[str]] = [[]]
+    shards: list[list[ir.TensorProtocol]] = [[]]
     current_shard_size = 0
 
-    for tensor_name, metadata in tensor_metadata.items():
-        tensor_size = metadata["size"]
-        # Check if adding this tensor would exceed max_shard_size
-        if current_shard_size + tensor_size > max_size_bytes and current_shard_size > 0:
+    for tensor in tensors:
+        tensor_size = tensor.nbytes
+        # Check if adding this tensor would exceed max_shard_size_bytes
+        if (
+            current_shard_size + tensor_size > max_shard_size_bytes
+            and current_shard_size > 0
+        ):
             # Start a new shard
             shards.append([])
             current_shard_size = 0
 
-        # Add tensor name to current shard
-        shards[-1].append(tensor_name)
+        shards[-1].append(tensor)
         current_shard_size += tensor_size
 
     return shards
 
 
 def _apply_tensors(
-    model: ir.Model,
+    values: Sequence[ir.Value],
     tensors: Mapping[str, ir.TensorProtocol],
     apply_safetensors: bool = False,
 ):
     """Apply tensors to an ONNX model.
 
     Args:
-        model: ONNX model to apply tensors to.
+        values: Values in the ONNX model.
         tensors: Tensors to apply to the ONNX model.
         apply_safetensors: Whether it is applying safetensors to the ONNX model.
     """
-    graph = model.graph
+    value_map: dict[str, ir.Value] = {value.name: value for value in values}  # type: ignore[misc]
     for name, tensor in tensors.items():
-        if name not in graph.initializers:
+        if name not in value_map:
             continue
-        model_tensor = graph.initializers[name].const_value
+        value = value_map[name]
+        model_tensor = value_map[name].const_value
         if model_tensor is not None and apply_safetensors:
             assert isinstance(tensor, ir.ExternalTensor)
             _check_tensors_match(model_tensor, tensor)
             updated_tensor = _migrate_tensor_shape_dtype(model_tensor, tensor)
         else:
             updated_tensor = tensor
-        graph.initializers[name].const_value = updated_tensor
-
-
-def _is_4bit(dtype: ir.DataType) -> bool:
-    return dtype in {
-        ir.DataType.UINT4,
-        ir.DataType.INT4,
-        ir.DataType.FLOAT4E2M1,
-    }
-
-
-def _is_8bit_float(dtype: ir.DataType) -> bool:
-    return dtype in {
-        ir.DataType.FLOAT8E4M3FN,
-        ir.DataType.FLOAT8E5M2,
-        ir.DataType.FLOAT8E4M3FNUZ,
-        ir.DataType.FLOAT8E5M2FNUZ,
-    }
+        value.const_value = updated_tensor
 
 
 def replace_tensors(
@@ -227,7 +223,8 @@ def replace_tensors(
         base_dir: Directory where the ONNX model file is stored.
     """
     tensors = _read_safetensors(location, base_dir=base_dir)
-    _apply_tensors(model, tensors, apply_safetensors=True)
+    values = [value for value, _ in _get_value_tensor_pairs(model)]
+    _apply_tensors(values, tensors, apply_safetensors=True)
 
 
 def load_file(model: TModel, /, tensor_file: str | os.PathLike) -> TModel:
@@ -279,7 +276,8 @@ def load(model: TModel, /, data: bytes) -> TModel:
         )
         for (name, metadata) in tensors
     }
-    _apply_tensors(model_ir, tensors_dict)
+    values = [value for value, _ in _get_value_tensor_pairs(model_ir)]
+    _apply_tensors(values, tensors_dict)
 
     if isinstance(model, onnx.ModelProto):
         return ir.serde.serialize_model(model_ir)
@@ -314,9 +312,11 @@ def load_file_as_external_data(
     return model_ir
 
 
-def _get_tensor_storage_shape(tensor: ir.TensorProtocol) -> list[int]:
-    if _is_4bit(tensor.dtype):
-        return [math.ceil(math.prod(tensor.shape.numpy()) / 2)]
+def _get_tensor_storage_shape(tensor: ir.TensorProtocol) -> Sequence[int]:
+    """Get the storage shape of a tensor for safetensors."""
+    # Handle sub-byte dtypes
+    if tensor.dtype.bitwidth < _BYTE_SIZE:
+        return [tensor.nbytes]
     return tensor.shape.numpy()
 
 
@@ -352,7 +352,36 @@ def save(model: TModel, /, *, size_threshold: int = 0) -> bytes:
     return safetensors.serialize(tensor_dict)
 
 
-def save_file(  # noqa: PLR0912, PLR0915
+def _get_value_tensor_pairs(
+    model: ir.Model,
+) -> list[tuple[ir.Value, ir.TensorProtocol]]:
+    # Store the original initializer values so they can be restored if modify_model=False
+    value_tensor_pairs: list[tuple[ir.Value, ir.TensorProtocol]] = []
+    initializer_names: set[str] = set()
+    for graph in model.graphs():
+        for value in graph.initializers.values():
+            tensor = value.const_value
+            # The value.name should be the same as tensor.name. However,
+            # in case there is a conflict, we do not care and will prefer value.name.
+            name = value.name
+            if name is None:
+                raise ValueError(
+                    f"Initializer value '{value!r}' has no name (in graph {graph.name!r}). "
+                    "All initializers must have names."
+                )
+            if tensor is None:
+                continue
+            if name in initializer_names:
+                raise ValueError(
+                    f"Duplicate initializer name found: {name} (in graph {graph.name!r})."
+                    " Rename the initializers to have unique names before saving to safetensors."
+                )
+            initializer_names.add(name)
+            value_tensor_pairs.append((value, tensor))
+    return value_tensor_pairs
+
+
+def save_file(  # noqa: PLR0912
     model: TModel,
     /,
     location: str | os.PathLike,
@@ -396,110 +425,84 @@ def save_file(  # noqa: PLR0912, PLR0915
     # Ensure that external_data ends with .safetensors
     if not str(location).endswith(".safetensors"):
         raise ValueError(
-            f"The path to safetensors file must have a .safetensors extension, got: {location}"
+            f'The path to safetensors file must have a .safetensors extension, got: "{location}"'
         )
+
+    max_shard_size_bytes = (
+        _parse_size_string(max_shard_size) if max_shard_size is not None else None
+    )
+    size_threshold_bytes = size_threshold
+
     if isinstance(model, onnx.ModelProto):
         model_ir = ir.serde.deserialize_model(model)
     else:
         model_ir = model
+    initialized_values = [value for value, _ in _get_value_tensor_pairs(model_ir)]
+    # First, collect metadata without loading tensor data
+    tensors_to_save: list[ir.TensorProtocol] = []
+    values_to_save: list[ir.Value] = []
+    for value in initialized_values:
+        tensor = value.const_value
+        assert tensor is not None
+        if tensor.nbytes < size_threshold_bytes:
+            continue
+        tensors_to_save.append(tensor)
+        values_to_save.append(value)
 
-    # Handle sharding if max_shard_size is specified
-    if max_shard_size is not None:
-        # First, collect metadata without loading tensor data
-        tensor_metadata = {}
-        total_size = 0
-        for name, initializer in model_ir.graph.initializers.items():
-            if initializer.const_value is None:
-                continue
-            if initializer.const_value.size < size_threshold:
-                continue
-            tensor = initializer.const_value
-            tensor_size = tensor.nbytes
-            tensor_metadata[name] = {
-                "size": tensor_size,
-                "dtype": _IR_DTYPE_TO_SAFETENSORS_DTYPE[tensor.dtype],
-                "shape": _get_tensor_storage_shape(tensor),
-            }
-            total_size += tensor_size
+    total_size = sum(tensor.nbytes for tensor in tensors_to_save)
 
-        if tensor_metadata:
-            # Determine sharding based on metadata only
-            shard_tensor_names = _shard_tensors(tensor_metadata, max_shard_size)
-            total_shards = len(shard_tensor_names)
+    if tensors_to_save:
+        # Determine sharding based on max_shard_size_bytes. When max_shard_size_bytes is None,
+        # It is the same as one shard (which is the same as no sharding).
+        tensor_shards = _shard_tensors(tensors_to_save, max_shard_size_bytes)
+        total_shards = len(tensor_shards)
 
-            # Save each shard, loading only necessary tensor data
-            all_shards = []
-            weight_map: dict[str, str] = {}  # Maps tensor name to shard filename
-            for shard_idx, tensor_names in enumerate(shard_tensor_names, start=1):
-                shard_filename = _get_shard_filename(
-                    str(location), shard_idx, total_shards
-                )
+        # Save each shard, loading only necessary tensor data
+        all_filenames = []
+        weight_map: dict[str, str] = {}  # Maps tensor name to shard filename
+        for shard_idx, tensor_shard in enumerate(tensor_shards, start=1):
+            shard_filename = _get_shard_filename(str(location), shard_idx, total_shards)
 
-                # Build tensor_dict for this shard only
-                shard_dict = {}
-                for tensor_name in (pbar := tqdm(tensor_names)):
-                    pbar.set_description(f"Saving {shard_filename} ({tensor_name})")
-                    tensor = model_ir.graph.initializers[tensor_name].const_value
-                    shard_dict[tensor_name] = {
-                        "dtype": tensor_metadata[tensor_name]["dtype"],
-                        "shape": tensor_metadata[tensor_name]["shape"],
-                        "data": tensor.tobytes(),
-                    }
+            shard_path = os.path.join(base_dir, shard_filename)
+            all_filenames.append(shard_filename)
 
-                shard_path = os.path.join(base_dir, shard_filename)
-                all_shards.append(shard_filename)
-                safetensors.serialize_file(shard_dict, shard_path)
-
-                # Update weight_map with shard filename
-                for tensor_name in tensor_names:
-                    weight_map[tensor_name] = shard_filename
-
-            # Save index file if sharding occurred
-            if total_shards > 1:
-                location_str = str(location)
-                if location_str.endswith(".safetensors"):
-                    index_filename = (
-                        location_str.rsplit(".safetensors", 1)[0]
-                        + ".safetensors.index.json"
-                    )
-                else:
-                    index_filename = location_str + ".index.json"
-                index_path = os.path.join(base_dir, index_filename)
-                index_data = {
-                    "metadata": {"total_size": total_size},
-                    "weight_map": weight_map,
+            # Build tensor_dict for this shard only
+            shard_dict: dict[str, Any] = {}
+            for tensor in (pbar := tqdm(tensor_shard)):
+                assert tensor.name is not None
+                pbar.set_description(f"Saving {shard_filename} ({tensor.name})")
+                shard_dict[tensor.name] = {
+                    "dtype": _IR_DTYPE_TO_SAFETENSORS_DTYPE[tensor.dtype],
+                    "shape": _get_tensor_storage_shape(tensor),
+                    "data": tensor.tobytes(),
                 }
-                with open(index_path, "w") as f:
-                    json.dump(index_data, f, indent=2)
+                # Update weight_map with shard filename
+                weight_map[tensor.name] = shard_filename
 
-            # For replace_data, replace tensors from each shard
-            if replace_data:
-                # When sharded, replace tensors from each shard file
-                for file_name in all_shards:
-                    replace_tensors(model_ir, file_name, base_dir)
-        else:
-            # No tensors to save
-            pass
-    else:
-        # No sharding - load all tensor data at once
-        tensor_dict = {}
-        for name, initializer in model_ir.graph.initializers.items():
-            if initializer.const_value is None:
-                continue
-            if initializer.const_value.size < size_threshold:
-                continue
-            tensor = initializer.const_value
-            tensor_dict[name] = {
-                "dtype": _IR_DTYPE_TO_SAFETENSORS_DTYPE[tensor.dtype],
-                "shape": _get_tensor_storage_shape(tensor),
-                # TODO: Return a memoryview when safetensors supports it.
-                "data": tensor.tobytes(),
+            safetensors.serialize_file(shard_dict, shard_path)
+
+        # Save index file if sharding occurred
+        if total_shards > 1:
+            location_str = str(location)
+            if location_str.endswith(".safetensors"):
+                index_filename = (
+                    location_str.rsplit(".safetensors", 1)[0]
+                    + ".safetensors.index.json"
+                )
+            else:
+                index_filename = location_str + ".index.json"
+            index_path = os.path.join(base_dir, index_filename)
+            index_data = {
+                "metadata": {"total_size": total_size},
+                "weight_map": weight_map,
             }
-        if tensor_dict:
-            tensor_file = os.path.join(base_dir, location)
-            safetensors.serialize_file(tensor_dict, tensor_file)
-            if replace_data:
-                replace_tensors(model_ir, location, base_dir)
+            with open(index_path, "w") as f:
+                json.dump(index_data, f, indent=2)
+
+        # Replace tensors from each shard file
+        if replace_data:
+            for filename in all_filenames:
+                replace_tensors(model_ir, filename, base_dir)
 
     if isinstance(model, onnx.ModelProto):
         return ir.serde.serialize_model(model_ir)
@@ -553,15 +556,23 @@ def save_model(
         model_ir = ir.serde.deserialize_model(model)
     else:
         model_ir = model
-    updated_model = save_file(
-        model_ir,
-        external_data,
-        os.path.dirname(model_path),
-        size_threshold=size_threshold,
-        replace_data=True,
-        max_shard_size=max_shard_size,
-    )
-    ir.save(updated_model, model_path)
+
+    # Store the original initializer values so they can be restored if modify_model=False
+    value_tensor_pairs = _get_value_tensor_pairs(model_ir)
+
+    try:
+        save_file(
+            model_ir,
+            external_data,
+            os.path.dirname(model_path),
+            size_threshold=size_threshold,
+            max_shard_size=max_shard_size,
+        )
+        ir.save(model_ir, model_path)
+    finally:
+        # Restore original initializers to avoid side effects
+        for value, tensor in value_tensor_pairs:
+            value.const_value = tensor
 
 
 def _read_safetensors_header(file: io.IOBase) -> tuple[dict[str, dict[str, Any]], int]:
@@ -574,7 +585,7 @@ def _read_safetensors_header(file: io.IOBase) -> tuple[dict[str, dict[str, Any]]
         The header of the safetensors file.
     """
     file.seek(0)
-    header_size = struct.unpack_from("i", file.read(_HEADER_SIZE_NUMBER_SIZE))[0]
+    header_size = struct.unpack_from("<Q", file.read(_HEADER_SIZE_NUMBER_SIZE))[0]
     header = file.read(header_size)
     return json.loads(header.decode("utf-8")), header_size
 
@@ -624,38 +635,12 @@ def _check_tensors_match(
     Raises:
         ValueError: If the tensors do not match.
     """
-    if _is_4bit(model_tensor.dtype):
-        if safe_tensor.dtype != ir.DataType.UINT8:
-            raise ValueError(
-                f"The tensor from safetensors has dtype: {safe_tensor.dtype}, but it must be UINT8 to "
-                f"represent the dtype of the tensor in the model: {model_tensor.dtype}."
-            )
-        if model_tensor.nbytes != safe_tensor.nbytes:
-            raise ValueError(
-                f"The tensor from safetensors has size: {safe_tensor.nbytes} bytes, "
-                f"which does not match the size of the tensor in the model: {model_tensor.nbytes} bytes."
-            )
-        return
-
-    if _is_8bit_float(model_tensor.dtype):
-        if (
-            not _is_8bit_float(safe_tensor.dtype)
-            and safe_tensor.dtype != ir.DataType.UINT8
-        ):
-            raise ValueError(
-                f"The tensor from safetensors has dtype: {safe_tensor.dtype}, but it must be UINT8 to "
-                f"represent the dtype of the tensor in the model: {model_tensor.dtype}."
-            )
-    elif model_tensor.dtype != safe_tensor.dtype:
+    if model_tensor.nbytes != safe_tensor.nbytes:
         raise ValueError(
-            f"The tensor from safetensors has dtype: {safe_tensor.dtype}, "
-            f"which does not match the dtype of the tensor in the model: {model_tensor.dtype}."
-        )
-
-    if model_tensor.shape != safe_tensor.shape:
-        raise ValueError(
-            f"The tensor from safetensors has shape: {safe_tensor.shape}, "
-            f"which does not match the shape of the tensor in the model: {model_tensor.shape}."
+            f"Tensor size mismatch for tensor '{model_tensor.name}': "
+            f"model tensor size {model_tensor.nbytes} bytes, "
+            f"safetensors tensor size {safe_tensor.nbytes} bytes. "
+            f"Model tensor: {model_tensor}, Safetensors tensor: {safe_tensor}"
         )
 
 
@@ -663,6 +648,8 @@ def _migrate_tensor_shape_dtype(
     model_tensor: ir.TensorProtocol, safe_tensor: ir.ExternalTensor
 ) -> ir.ExternalTensor:
     """Migrate the shape and dtype of a tensor.
+
+    This is needed because we store 4bit and 2bit tensors as UINT8 in safetensors.
 
     Args:
         model_tensor: The tensor to migrate.
@@ -672,17 +659,21 @@ def _migrate_tensor_shape_dtype(
         The migrated tensor.
     """
     if model_tensor.dtype in {
-        # ir.DataType.FLOAT8E4M3FN,
-        # ir.DataType.FLOAT8E5M2,
+        # Types that safetensors does not support directly
         ir.DataType.FLOAT8E4M3FNUZ,
         ir.DataType.FLOAT8E5M2FNUZ,
-    } or _is_4bit(model_tensor.dtype):
+        ir.DataType.FLOAT4E2M1,  # Still need to migrate shape
+        ir.DataType.INT4,
+        ir.DataType.INT2,
+        ir.DataType.UINT4,
+        ir.DataType.UINT2,
+    }:
         return ir.ExternalTensor(
             location=safe_tensor.location,
             offset=safe_tensor.offset,
             length=safe_tensor.length,
             dtype=model_tensor.dtype,
-            shape=model_tensor.shape,
+            shape=model_tensor.shape,  # type: ignore[arg-type]
             name=safe_tensor.name,
             base_dir=safe_tensor.base_dir,
         )
