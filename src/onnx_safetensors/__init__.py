@@ -20,4 +20,4 @@ from onnx_safetensors._safetensors_io import (
     save_model,
 )
 
-__version__ = "1.5.0"
+__version__ = "1.4.1"
