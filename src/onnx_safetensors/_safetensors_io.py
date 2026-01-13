@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import io
 import json
-import math
 import os
 import re
 import struct
@@ -14,7 +13,6 @@ from typing import TYPE_CHECKING, Any, TypeVar
 import onnx
 import onnx_ir as ir
 import safetensors
-from tqdm.auto import tqdm
 
 from onnx_safetensors import _tensors
 
@@ -23,6 +21,7 @@ if TYPE_CHECKING:
 
 
 _HEADER_SIZE_NUMBER_SIZE = 8
+_BYTE_SIZE = 8
 # https://github.com/huggingface/safetensors/blob/543243c3017e413584f27ebd4b99c844f62deb34/safetensors/src/tensor.rs#L664
 _SAFETENSORS_DTYPE_TO_IR_DTYPE = {
     "BOOL": ir.DataType.BOOL,
@@ -315,7 +314,7 @@ def load_file_as_external_data(
 def _get_tensor_storage_shape(tensor: ir.TensorProtocol) -> Sequence[int]:
     """Get the storage shape of a tensor for safetensors."""
     # Handle sub-byte dtypes
-    if tensor.dtype.bitwidth < 8:
+    if tensor.dtype.bitwidth < _BYTE_SIZE:
         return [tensor.nbytes]
     return tensor.shape.numpy()
 
@@ -381,7 +380,7 @@ def _get_value_tensor_pairs(
     return value_tensor_pairs
 
 
-def save_file(  # noqa: PLR0912, PLR0915
+def save_file(  # noqa: PLR0912
     model: TModel,
     /,
     location: str | os.PathLike,
