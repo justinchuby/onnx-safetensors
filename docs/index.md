@@ -68,7 +68,7 @@ onnx.save(model_with_external_data, os.path.join(base_dir, "model_using_safetens
 
 ### Save an ONNX model with safetensors weights
 
-The `save_model` function is a convenient way to save both the ONNX model and its weights to separate files:
+The `{py:func}`onnx_safetensors.save_model` function is a convenient way to save both the ONNX model and its weights to separate files:
 
 ```python
 import onnx_safetensors
@@ -137,7 +137,7 @@ onnx_safetensors.extract_safetensors_model(
 )
 ```
 
-**Note:** This format is for storage/transfer only and is not compatible with ONNX Runtime. Use {py:func}`onnx_safetensors,extract_safetensors_model` with `output_path` to create a runnable ONNX model that references the safetensors file as external data.
+**Note:** This format is for storage/transfer only and is not compatible with ONNX Runtime. Use {py:func}`onnx_safetensors.extract_safetensors_model` with `output_path` to create a runnable ONNX model that references the safetensors file as external data.
 
 ## Command Line Interface
 
