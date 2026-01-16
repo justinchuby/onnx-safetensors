@@ -212,7 +212,9 @@ def _apply_tensors(
 def replace_tensors(
     model: ir.Model, /, location: str | os.PathLike, base_dir: str | os.PathLike
 ) -> None:
-    """Replace all tensors in an ONNX model with external data from a safetensors file.
+    """Replace weights in an ONNX model with those of the same names found in the safetensors file.
+
+    The weights will be represented as 'external data' references in onnx TensorProto.
 
     .. versionadded:: 1.0
         Added the function.
