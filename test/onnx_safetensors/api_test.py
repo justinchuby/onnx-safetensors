@@ -10,10 +10,11 @@ import numpy as np
 import onnx
 import onnx.helper
 import onnx.numpy_helper
+import onnx_ir as ir
 import onnxruntime as ort
 import parameterized
+import safetensors
 import safetensors.numpy
-import onnx_ir as ir
 
 import onnx_safetensors
 from onnx_safetensors._safetensors_io import _get_shard_filename, _parse_size_string
