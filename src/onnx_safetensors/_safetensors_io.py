@@ -10,6 +10,7 @@ import struct
 from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING, Any, TypeVar
 
+import google.protobuf.json_format
 import onnx
 import onnx_ir as ir
 import safetensors
@@ -577,6 +578,105 @@ def save_model(
             value.const_value = tensor
 
 
+def save_safetensors_model(
+    model: TModel,
+    safetensors_model_path: str | os.PathLike,
+):
+    """Save an ONNX model to a safetensors file.
+
+    This function will embed the onnx model **into** a safetensors file. This file
+    is not compatible with onnx runtime, and is only useful for storage or transfer.
+
+    .. versionadded:: 1.5.0
+        Added the function.
+
+    Args:
+        model: ONNX model to save.
+        safetensors_model_path: Path to the safetensors model file.
+    """
+    if isinstance(model, onnx.ModelProto):
+        model_ir = ir.serde.deserialize_model(model)
+    else:
+        model_ir = model
+
+    value_tensor_pairs = _get_value_tensor_pairs(model_ir)
+
+    tensor_dict: dict[str, dict[str, Any]] = {}
+    for value, tensor in value_tensor_pairs:
+        name = value.name
+        assert name is not None
+        tensor_dict[name] = {
+            "dtype": _IR_DTYPE_TO_SAFETENSORS_DTYPE[tensor.dtype],
+            "shape": _get_tensor_storage_shape(tensor),
+            "data": tensor.tobytes(),
+        }
+
+    try:
+        for value, tensor in value_tensor_pairs:
+            # There is no way to determine the offset and length before writing the
+            # safetensors file. This is a chicken-and-egg problem.
+            value.const_value = ir.ExternalTensor(
+                location=".",
+                offset=-1,
+                length=tensor.nbytes,
+                dtype=tensor.dtype,
+                shape=tensor.shape,
+                name=value.name,
+                base_dir="",
+            )
+    finally:
+        # Restore original initializers to avoid side effects
+        for value, tensor in value_tensor_pairs:
+            value.const_value = tensor
+
+    onnx_json_text = google.protobuf.json_format.MessageToJson(
+        ir.serde.serialize_model(model_ir),
+        preserving_proto_field_name=True,
+        indent=None,
+    )
+
+    metadata = {"onnx": onnx_json_text}
+
+    safetensors.serialize_file(tensor_dict, safetensors_model_path, metadata=metadata)
+
+
+def extract_safetensors_model(
+    safetensors_model_path: str | os.PathLike,
+    output_path: str | os.PathLike | None = None,
+) -> ir.Model:
+    """Unpack an ONNX model stored in a safetensors file.
+
+    This function will extract the onnx model **from** a safetensors file
+    created by `save_safetensors_model`.
+
+    .. versionadded:: 1.5.0
+        Added the function.
+
+    Args:
+        safetensors_model_path: Path to the safetensors model file.
+        output_path: If provided, the extracted ONNX model (that references the
+            safetensors file as external data) will be saved to this path.
+
+    Returns:
+        The extracted ONNX model.
+    """
+    metadata = _read_metadata(safetensors_model_path)
+    if "onnx" not in metadata:
+        raise ValueError(
+            f"The safetensors file '{safetensors_model_path}' does not contain an ONNX model."
+        )
+    onnx_json = metadata["onnx"]
+    proto = google.protobuf.json_format.Parse(onnx_json, onnx.ModelProto())
+    model = ir.serde.deserialize_model(proto)
+
+    filename = os.path.basename(safetensors_model_path)
+    base_dir = os.path.dirname(safetensors_model_path)
+    replace_tensors(model, filename, base_dir=base_dir)
+    if output_path is not None:
+        ir.save(model, output_path)
+    return model
+
+
 def _read_safetensors_header(file: io.IOBase) -> tuple[dict[str, dict[str, Any]], int]:
     """Read the header of a safetensors file.
 
@@ -623,6 +723,20 @@ def _read_safetensors(
             base_dir=base_dir,
         )
     return tensors
+
+
+def _read_metadata(path: str | os.PathLike) -> dict[str, Any]:
+    """Read the metadata of a safetensors file.
+
+    Args:
+        path: The safetensors file to read.
+
+    Returns:
+        The metadata of the safetensors file.
+    """
+    with open(path, "rb") as file:
+        header, _ = _read_safetensors_header(file)
+    return header.get("__metadata__", {})
 
 
 def _check_tensors_match(
