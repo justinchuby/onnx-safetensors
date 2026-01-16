@@ -114,6 +114,31 @@ onnx_safetensors.save_file(
 
 The sharding format is compatible with the Hugging Face transformers library, making it easy to share and load models across different frameworks.
 
+### Embed ONNX model in a safetensors file
+
+For storage or transfer purposes, you can embed an entire ONNX model (structure and weights) into a single safetensors file:
+
+```python
+import onnx_safetensors
+
+# Provide your ONNX model here
+model: onnx.ModelProto
+
+# Save the entire model (structure + weights) into a safetensors file
+onnx_safetensors.save_safetensors_model(model, "model.safetensors")
+
+# Later, extract the model from the safetensors file
+model = onnx_safetensors.extract_safetensors_model("model.safetensors")
+
+# Or extract and save to an ONNX file that references the safetensors file as external data
+onnx_safetensors.extract_safetensors_model(
+    "model.safetensors",
+    output_path="model.onnx"
+)
+```
+
+**Note:** This format is for storage/transfer only and is not compatible with ONNX Runtime. Use `extract_safetensors_model` with `output_path` to create a runnable ONNX model that references the safetensors file as external data.
+
 ## Command Line Interface
 
 onnx-safetensors provides a command-line interface for converting ONNX models to use safetensors format:
