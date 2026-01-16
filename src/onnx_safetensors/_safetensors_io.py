@@ -611,18 +611,23 @@ def save_safetensors_model(
             "data": tensor.tobytes(),
         }
 
-    for value, tensor in value_tensor_pairs:
-        # There is no way to determine the offset and length before writing the
-        # safetensors file. This is a chicken-and-egg problem.
-        value.const_value = ir.ExternalTensor(
-            location=".",
-            offset=-1,
-            length=tensor.nbytes,
-            dtype=tensor.dtype,
-            shape=tensor.shape,
-            name=value.name,
-            base_dir="",
-        )
+    try:
+        for value, tensor in value_tensor_pairs:
+            # There is no way to determine the offset and length before writing the
+            # safetensors file. This is a chicken-and-egg problem.
+            value.const_value = ir.ExternalTensor(
+                location=".",
+                offset=-1,
+                length=tensor.nbytes,
+                dtype=tensor.dtype,
+                shape=tensor.shape,
+                name=value.name,
+                base_dir="",
+            )
+    finally:
+        # Restore original initializers to avoid side effects
+        for value, tensor in value_tensor_pairs:
+            value.const_value = tensor
 
     onnx_json_text = google.protobuf.json_format.MessageToJson(
         ir.serde.serialize_model(model_ir),
