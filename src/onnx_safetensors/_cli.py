@@ -35,6 +35,26 @@ def convert_command(args: argparse.Namespace) -> None:
     print(f"Model saved to {output_path}")
 
 
+def embed_command(args: argparse.Namespace) -> None:
+    """Embed an ONNX model into a safetensors file.
+
+    Args:
+        args: Command line arguments.
+    """
+    input_path = Path(args.input)
+    output_path = Path(args.output)
+
+    # Load the ONNX model
+    print(f"Loading ONNX model from {input_path}...")
+    model = ir.load(input_path)
+
+    # Embed the model into a safetensors file
+    print("Embedding model into safetensors file...")
+    onnx_safetensors.save_safetensors_model(model, output_path)
+
+    print(f"Model embedded to {output_path}")
+
+
 def main() -> int:
     """Main entry point for the CLI."""
     parser = argparse.ArgumentParser(
@@ -44,7 +64,7 @@ def main() -> int:
 
     # Convert command
     convert_parser = subparsers.add_parser(
-        "convert", help="Convert an ONNX model to use safetensors format"
+        "convert", help="Convert an ONNX model to use safetensors format as external data"
     )
     convert_parser.add_argument("input", type=str, help="Path to the input ONNX model")
     convert_parser.add_argument(
@@ -57,10 +77,22 @@ def main() -> int:
         help='Maximum size for each shard (e.g., "5GB", "100MB"). If not specified, no sharding is performed.',
     )
 
+    # Embed command
+    embed_parser = subparsers.add_parser(
+        "embed", help="Embed an ONNX model into a safetensors file"
+    )
+    embed_parser.add_argument("input", type=str, help="Path to the input ONNX model")
+    embed_parser.add_argument(
+        "output", type=str, help="Path to the output safetensors file"
+    )
+
     args = parser.parse_args()
 
     if args.command == "convert":
         convert_command(args)
+        return 0
+    elif args.command == "embed":
+        embed_command(args)
         return 0
     else:
         parser.print_help()

@@ -162,6 +162,9 @@ onnx-safetensors convert input.onnx output.onnx --max-shard-size 5GB
 
 # You can also specify size in MB
 onnx-safetensors convert input.onnx output.onnx --max-shard-size 500MB
+
+# Embed an ONNX model into a safetensors file
+onnx-safetensors embed input.onnx output.safetensors
 ```
 
 The `convert` command:
@@ -170,6 +173,13 @@ The `convert` command:
 - Saves it with safetensors external data to the output path
 - Optionally shards large models using `--max-shard-size`
 - Creates index files automatically when sharding is enabled
+
+The `embed` command:
+
+- Loads an ONNX model from the input path
+- Embeds the entire model (structure and weights) into a single safetensors file
+- Useful for storage or transfer purposes
+- Use `onnx_safetensors.extract_safetensors_model` in Python to extract the model later
 
 ## Examples
 
