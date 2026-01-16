@@ -64,7 +64,8 @@ def main() -> int:
 
     # Convert command
     convert_parser = subparsers.add_parser(
-        "convert", help="Convert an ONNX model to use safetensors format as external data"
+        "convert",
+        help="Convert an ONNX model to use safetensors format as external data",
     )
     convert_parser.add_argument("input", type=str, help="Path to the input ONNX model")
     convert_parser.add_argument(
