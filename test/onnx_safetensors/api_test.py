@@ -801,6 +801,131 @@ class PublicIrApiTest(unittest.TestCase):
             "model.safetensors",
         )
 
+    def test_save_safetensors_model(self) -> None:
+        """Test saving an ONNX model embedded in a safetensors file."""
+        safetensors_model_path = pathlib.Path(self.temp_dir.name) / "model.safetensors"
+
+        onnx_safetensors.save_safetensors_model(self.model, safetensors_model_path)
+
+        # Verify the file was created
+        self.assertTrue(safetensors_model_path.exists())
+
+        # Load the safetensors file and verify metadata
+        with safetensors.safe_open(str(safetensors_model_path), framework="numpy") as f:
+            metadata = f.metadata()
+            self.assertIsNotNone(metadata)
+            self.assertIn("onnx", metadata)
+
+            # Verify tensors are present
+            for key in self.model_tensor_dict.keys():
+                tensor = f.get_tensor(key)
+                np.testing.assert_array_equal(tensor, self.model_tensor_dict[key])
+
+    def test_extract_safetensors_model(self) -> None:
+        """Test extracting an ONNX model from a safetensors file."""
+        safetensors_model_path = pathlib.Path(self.temp_dir.name) / "model.safetensors"
+
+        # First save a model
+        onnx_safetensors.save_safetensors_model(self.model, safetensors_model_path)
+
+        # Extract the model
+        extracted_model = onnx_safetensors.extract_safetensors_model(
+            safetensors_model_path
+        )
+
+        # Verify the extracted model is an ir.Model
+        self.assertIsInstance(extracted_model, ir.Model)
+
+        # Verify the tensors reference the safetensors file as external data
+        for name, initializer in extracted_model.graph.initializers.items():
+            if name in self.model_tensor_dict:
+                self.assertIsNotNone(initializer.const_value)
+                self.assertIsInstance(initializer.const_value, ir.ExternalTensor)
+                self.assertEqual(initializer.const_value.location, "model.safetensors")
+
+    def test_extract_safetensors_model_with_output_path(self) -> None:
+        """Test extracting an ONNX model and saving it to a file."""
+        safetensors_model_path = pathlib.Path(self.temp_dir.name) / "model.safetensors"
+        output_onnx_path = pathlib.Path(self.temp_dir.name) / "extracted.onnx"
+
+        # First save a model
+        onnx_safetensors.save_safetensors_model(self.model, safetensors_model_path)
+
+        # Extract the model with output path
+        extracted_model = onnx_safetensors.extract_safetensors_model(
+            safetensors_model_path, output_path=output_onnx_path
+        )
+
+        # Verify both the model and the output file exist
+        self.assertIsInstance(extracted_model, ir.Model)
+        self.assertTrue(output_onnx_path.exists())
+
+        # Load the saved ONNX file and verify it's valid
+        loaded_onnx = onnx.load(str(output_onnx_path))
+        self.assertIsNotNone(loaded_onnx)
+
+    def test_extract_safetensors_model_invalid_file(self) -> None:
+        """Test that extracting from a non-ONNX safetensors file raises an error."""
+        safetensors_path = pathlib.Path(self.temp_dir.name) / "data.safetensors"
+
+        # Save a regular safetensors file without ONNX metadata
+        safetensors.numpy.save_file(self.replacement_tensor_dict, safetensors_path)
+
+        # Attempting to extract should raise an error
+        with self.assertRaises(ValueError) as ctx:
+            onnx_safetensors.extract_safetensors_model(safetensors_path)
+
+        self.assertIn("does not contain an ONNX model", str(ctx.exception))
+
+    def test_save_and_extract_safetensors_model_roundtrip(self) -> None:
+        """Test that save and extract operations preserve model data."""
+        safetensors_model_path = pathlib.Path(self.temp_dir.name) / "model.safetensors"
+
+        # Save the model
+        onnx_safetensors.save_safetensors_model(self.model, safetensors_model_path)
+
+        # Extract and load the model
+        extracted_model = onnx_safetensors.extract_safetensors_model(
+            safetensors_model_path
+        )
+        loaded_model = ir.external_data.load_to_model(extracted_model)
+
+        # Verify tensor values match
+        for name, initializer in loaded_model.graph.initializers.items():
+            if name in self.model_tensor_dict:
+                np.testing.assert_array_equal(
+                    initializer.const_value, self.model_tensor_dict[name]
+                )
+
+    def test_save_safetensors_model_runnable_with_ort(self) -> None:
+        """Test that a runnable model saved as safetensors can be extracted and run."""
+        model = _create_runnable_test_model()
+        safetensors_model_path = (
+            pathlib.Path(self.temp_dir.name) / "runnable.safetensors"
+        )
+        output_onnx_path = pathlib.Path(self.temp_dir.name) / "runnable.onnx"
+
+        # Save as safetensors model
+        onnx_safetensors.save_safetensors_model(model, safetensors_model_path)
+
+        # Extract to ONNX file
+        onnx_safetensors.extract_safetensors_model(
+            safetensors_model_path, output_path=output_onnx_path
+        )
+
+        # Run with ONNX Runtime
+        input_data = np.array(
+            [[10.0, 20.0, 30.0], [40.0, 50.0, 60.0]], dtype=np.float32
+        )
+        weights = np.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]], dtype=np.float32)
+        expected_output = input_data + weights
+
+        self.assert_ort(
+            output_onnx_path,
+            {"input": input_data},
+            {"output": expected_output},
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

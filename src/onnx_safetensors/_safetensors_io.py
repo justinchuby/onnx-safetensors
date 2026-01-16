@@ -10,11 +10,11 @@ import struct
 from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING, Any, TypeVar
 
+import google.protobuf.json_format
 import onnx
 import onnx_ir as ir
 import safetensors
 from tqdm.auto import tqdm
-import google.protobuf.json_format
 
 from onnx_safetensors import _tensors
 
@@ -612,6 +612,8 @@ def save_safetensors_model(
         }
 
     for value, tensor in value_tensor_pairs:
+        # There is no way to determine the offset and length before writing the
+        # safetensors file. This is a chicken-and-egg problem.
         value.const_value = ir.ExternalTensor(
             location=".",
             offset=-1,
@@ -622,14 +624,13 @@ def save_safetensors_model(
             base_dir="",
         )
 
-    onnx_json = json.loads(
-        google.protobuf.json_format.MessageToJson(
-            ir.serde.serialize_model(model_ir),
-            preserving_proto_field_name=True,
-            indent=None,
-        )
+    onnx_json_text = google.protobuf.json_format.MessageToJson(
+        ir.serde.serialize_model(model_ir),
+        preserving_proto_field_name=True,
+        indent=None,
     )
-    metadata = {"onnx": onnx_json}
+
+    metadata = {"onnx": onnx_json_text}
 
     safetensors.serialize_file(tensor_dict, safetensors_model_path, metadata=metadata)
 
@@ -660,7 +661,7 @@ def extract_safetensors_model(
             f"The safetensors file '{safetensors_model_path}' does not contain an ONNX model."
         )
     onnx_json = metadata["onnx"]
-    proto = google.protobuf.json_format.ParseDict(onnx_json, onnx.ModelProto())
+    proto = google.protobuf.json_format.Parse(onnx_json, onnx.ModelProto())
     model = ir.serde.deserialize_model(proto)
 
     filename = os.path.basename(safetensors_model_path)
@@ -723,8 +724,7 @@ def _read_metadata(path: str | os.PathLike) -> dict[str, Any]:
     """Read the metadata of a safetensors file.
 
     Args:
-        location: The safetensors file to read.
-        base_dir: Directory where the ONNX model file is stored.
+        path: The safetensors file to read.
 
     Returns:
         The metadata of the safetensors file.
