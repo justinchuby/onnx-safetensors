@@ -185,3 +185,8 @@ The `embed` command:
 
 - [Tutorial notebook](examples/tutorial.ipynb)
 - [save_model and sharding examples](examples/save_model_sharding.py)
+
+## Star History
+
+[![Star History Chart](https://api.star-history.com/svg?repos=justinchuby/onnx-safetensors&type=date&legend=top-left)](https://www.star-history.com/#justinchuby/onnx-safetensors&type=date&legend=top-left)
+
