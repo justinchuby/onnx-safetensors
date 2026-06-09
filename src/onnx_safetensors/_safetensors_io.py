@@ -94,16 +94,20 @@ def _prepare_safetensors_tensor_dict(
     buffers: list[bytearray] = []
     for name, metadata in tensor_dict.items():
         data = metadata["data"]
+        data_len = len(data)
         if isinstance(data, bytearray):
             buffer = data
         else:
             buffer = bytearray(data)
+        if data_len == 0:
+            # ctypes.from_buffer requires at least 1 byte; keep a dummy byte alive for empty tensors.
+            buffer = bytearray(1)
         buffers.append(buffer)
         prepared_dict[name] = tensor_spec(
             dtype=metadata["dtype"],
             shape=[int(d) for d in metadata["shape"]],
             data_ptr=ctypes.addressof(ctypes.c_char.from_buffer(buffer)),
-            data_len=len(buffer),
+            data_len=data_len,
         )
     return prepared_dict, buffers
 
