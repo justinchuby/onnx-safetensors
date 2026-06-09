@@ -5,6 +5,7 @@ import pathlib
 import tempfile
 import unittest
 from typing import Any
+from unittest import mock
 
 import numpy as np
 import onnx
@@ -593,6 +594,25 @@ class PublicIrApiTest(unittest.TestCase):
         tensors = safetensors.deserialize(data)
         tensor = ir.tensor([0, 1, 6], dtype=dtype)
         self.assertEqual(tensors[0][1]["data"], tensor.tobytes())
+
+    def test_save_uses_tensorspec_when_available(self) -> None:
+        if not hasattr(safetensors, "TensorSpec"):
+            self.skipTest("TensorSpec not available")
+
+        model = _create_test_ir_model(ir.DataType.FLOAT)
+        original_serialize = safetensors.serialize
+
+        def _assert_tensorspec(tensor_dict: Any, metadata: Any = None) -> bytes:
+            for tensor_spec in tensor_dict.values():
+                self.assertIsInstance(tensor_spec, safetensors.TensorSpec)
+            return original_serialize(tensor_dict, metadata=metadata)
+
+        with mock.patch(
+            "onnx_safetensors._safetensors_io.safetensors.serialize",
+            side_effect=_assert_tensorspec,
+        ):
+            data = onnx_safetensors.save(model)
+        self.assertTrue(data)
 
     @parameterized.parameterized.expand(
         [
