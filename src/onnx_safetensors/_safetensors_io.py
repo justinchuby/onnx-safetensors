@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ctypes
 import io
 import json
 import os
@@ -74,6 +75,40 @@ _IR_DTYPE_TO_SAFETENSORS_DTYPE = {
 
 
 TModel = TypeVar("TModel", onnx.ModelProto, ir.Model)
+
+
+def _prepare_safetensors_tensor_dict(
+    tensor_dict: Mapping[str, dict[str, Any]],
+) -> tuple[Mapping[str, Any], list[bytearray]]:
+    """Prepare tensor_dict for safetensors.serialize and safetensors.serialize_file.
+
+    Returns:
+        A tuple of (tensor_dict, buffers). `buffers` keeps tensor data alive while
+        safetensors reads raw pointers from TensorSpec on safetensors>=0.8.
+    """
+    tensor_spec = getattr(safetensors, "TensorSpec", None)
+    if tensor_spec is None:
+        return tensor_dict, []
+
+    prepared_dict: dict[str, Any] = {}
+    buffers: list[bytearray] = []
+    for name, metadata in tensor_dict.items():
+        data = metadata["data"]
+        data_len = len(data)
+        if isinstance(data, bytearray):
+            buffer = data
+        else:
+            buffer = bytearray(data)
+        buffers.append(buffer)
+        # A zero-length array type is valid here, so empty tensors do not need special handling.
+        c_buffer = (ctypes.c_char * data_len).from_buffer(buffer)
+        prepared_dict[name] = tensor_spec(
+            dtype=metadata["dtype"],
+            shape=[int(d) for d in metadata["shape"]],
+            data_ptr=ctypes.addressof(c_buffer),
+            data_len=data_len,
+        )
+    return prepared_dict, buffers
 
 
 def _parse_size_string(size: int | str) -> int:
@@ -352,7 +387,9 @@ def save(model: TModel, /, *, size_threshold: int = 0) -> bytes:
             # TODO: Return a memoryview when safetensors supports it.
             "data": tensor.tobytes(),
         }
-    return safetensors.serialize(tensor_dict)
+    prepared_tensor_dict, _buffers = _prepare_safetensors_tensor_dict(tensor_dict)
+    # _buffers must stay alive until serialize() finishes reading the TensorSpec raw pointers.
+    return safetensors.serialize(prepared_tensor_dict)
 
 
 def _get_value_tensor_pairs(
@@ -482,7 +519,9 @@ def save_file(  # noqa: PLR0912
                 # Update weight_map with shard filename
                 weight_map[tensor.name] = shard_filename
 
-            safetensors.serialize_file(shard_dict, shard_path)
+            prepared_shard_dict, _buffers = _prepare_safetensors_tensor_dict(shard_dict)
+            # _buffers must stay alive until serialize_file() finishes reading the TensorSpec raw pointers.
+            safetensors.serialize_file(prepared_shard_dict, shard_path)
 
         # Save index file if sharding occurred
         if total_shards > 1:
@@ -637,7 +676,11 @@ def save_safetensors_model(
 
     metadata = {"onnx": onnx_json_text}
 
-    safetensors.serialize_file(tensor_dict, safetensors_model_path, metadata=metadata)
+    prepared_tensor_dict, _buffers = _prepare_safetensors_tensor_dict(tensor_dict)
+    # _buffers must stay alive until serialize_file() finishes reading the TensorSpec raw pointers.
+    safetensors.serialize_file(
+        prepared_tensor_dict, safetensors_model_path, metadata=metadata
+    )
 
 
 def extract_safetensors_model(
