@@ -99,14 +99,13 @@ def _prepare_safetensors_tensor_dict(
             buffer = data
         else:
             buffer = bytearray(data)
-        if data_len == 0:
-            # ctypes.from_buffer requires at least 1 byte; keep a dummy byte alive for empty tensors.
-            buffer = bytearray(1)
         buffers.append(buffer)
+        # A zero-length array type is valid here, so empty tensors do not need special handling.
+        c_buffer = (ctypes.c_char * data_len).from_buffer(buffer)
         prepared_dict[name] = tensor_spec(
             dtype=metadata["dtype"],
             shape=[int(d) for d in metadata["shape"]],
-            data_ptr=ctypes.addressof(ctypes.c_char.from_buffer(buffer)),
+            data_ptr=ctypes.addressof(c_buffer),
             data_len=data_len,
         )
     return prepared_dict, buffers
